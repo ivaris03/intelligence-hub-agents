@@ -130,3 +130,17 @@ FND -> 核心 Chat -> 标题/推荐问题/搜索 -> 文件与联网
 3. 新增核心逻辑有基础测试。
 4. 配置、接口或限制发生变化时同步更新文档。
 5. 不提交密钥、生成产物或本地数据库。
+
+## 8. P0 实施状态
+
+> 完成日期：2026-08-13
+> 详细的十四场景证据见 [`acceptance.md`](acceptance.md)。
+
+| 里程碑 | 已完成 P0 | 状态 |
+| --- | --- | --- |
+| M0 基础骨架 | FND-01～FND-06 | ✅ 完成 |
+| M1 Chat MVP | CHAT-01～CHAT-08、FILE-01～FILE-05、WEB-01～WEB-02、SKILL-01～SKILL-04、MEMORY-01～MEMORY-05 | ✅ 完成 |
+| M2 Agent Hub | RUN-01～RUN-02、IMG-01～IMG-02、SLIDE-01～SLIDE-07、RES-01～RES-04 | ✅ 完成 |
+| M3 收尾 | QA-01～QA-02、UX-01、SEC-01、DOC-01 | ✅ 完成 |
+
+验收说明：已使用服务端配置的真实 Qwen、Qwen Vision、Qwen Image、Embedding 与 Tavily 凭据完成在线复验；模型思考/回答分流、真实来源过滤、文档向量检索、图片、PPTX 和研究报告产物链路均通过。无密钥环境仍保留可预测的安全演示与明确失败分支。

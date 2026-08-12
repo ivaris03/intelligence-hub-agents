@@ -1,12 +1,20 @@
-from typing import Literal
+from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+AgentType = Literal["image", "slides", "research"]
 
 
 class ChatRequest(BaseModel):
+    """Compatibility payload for the stateless M0 streaming endpoint."""
+
     content: str = Field(min_length=1, max_length=20_000)
     mode: Literal["chat", "work"] = "chat"
-    agent_type: Literal["image", "slides", "research"] | None = None
+    agent_type: AgentType | None = None
 
     @model_validator(mode="after")
     def validate_mode(self):
@@ -22,4 +30,223 @@ class HealthResponse(BaseModel):
     service: str
     environment: str
     model_ready: bool
+    tavily_ready: bool
+    storage_backend: str
 
+
+class ConversationCreate(BaseModel):
+    title: str = Field(default="新会话", min_length=1, max_length=120)
+
+
+class ConversationPatch(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
+class ConversationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    title: str
+    title_source: str
+    created_at: datetime
+    updated_at: datetime
+    last_activity_at: datetime
+    match_snippet: str | None = None
+
+
+class MessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+    mode: Literal["chat", "work"] = "chat"
+    agent_type: AgentType | None = None
+    file_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    skill_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_mode(self):
+        if self.mode == "chat" and self.agent_type is not None:
+            raise ValueError("Chat 模式不能指定 Agent")
+        if self.mode == "work" and self.agent_type is None:
+            raise ValueError("Work 模式必须指定 Agent")
+        return self
+
+
+class MessagePartOut(BaseModel):
+    seq: int
+    type: str
+    content: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCallOut(BaseModel):
+    id: UUID
+    seq: int
+    tool_name: str
+    input_summary: str
+    output_summary: str
+    status: str
+    duration_ms: int | None
+
+
+class FileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    conversation_id: UUID
+    name: str
+    mime_type: str
+    kind: str
+    size: int
+    status: str
+    error: str | None
+    created_at: datetime
+
+
+class SkillSummary(BaseModel):
+    id: UUID | None = None
+    name: str
+    description: str = ""
+
+
+class MessageOut(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    role: str
+    mode: str
+    agent_type: str | None
+    content: str
+    reasoning: str
+    follow_up: str | None
+    status: str
+    error: str | None
+    created_at: datetime
+    parts: list[MessagePartOut] = Field(default_factory=list)
+    tool_calls: list[ToolCallOut] = Field(default_factory=list)
+    files: list[FileOut] = Field(default_factory=list)
+    skill: SkillSummary | None = None
+    run_id: UUID | None = None
+
+
+class SkillCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    instructions: str = Field(min_length=1, max_length=20_000)
+    enabled: bool = True
+
+
+class SkillPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+    instructions: str | None = Field(default=None, min_length=1, max_length=20_000)
+    enabled: bool | None = None
+
+
+class SkillOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    description: str
+    instructions: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=500)
+
+
+class MemoryPatch(BaseModel):
+    content: str = Field(min_length=1, max_length=500)
+
+
+class MemoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    content: str
+    source: str
+    source_conversation_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AppSettingsPatch(BaseModel):
+    memory_enabled: bool | None = None
+    web_search_enabled: bool | None = None
+    appearance: Literal["system", "light", "dark"] | None = None
+
+
+class AppSettingsOut(BaseModel):
+    memory_enabled: bool
+    web_search_enabled: bool
+    appearance: str
+    model_ready: bool
+    tavily_ready: bool
+    storage_backend: str
+
+
+class AgentInfo(BaseModel):
+    type: AgentType
+    name: str
+    description: str
+    accepts_images: bool
+    output_type: str
+
+
+class AgentRunRequest(BaseModel):
+    conversation_id: UUID
+    agent_type: AgentType
+    input: str = Field(min_length=1, max_length=20_000)
+    file_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    skill_id: UUID | None = None
+    intent: Literal["CREATE", "MODIFY", "RESUME"] | None = None
+    source_run_id: UUID | None = None
+    source_artifact_id: UUID | None = None
+
+
+class AgentRunCommand(BaseModel):
+    action: Literal["confirm", "cancel", "retry"]
+    input: str | None = Field(default=None, max_length=20_000)
+
+
+class ArtifactOut(BaseModel):
+    id: UUID
+    run_id: UUID
+    parent_artifact_id: UUID | None
+    version: int
+    type: str
+    name: str
+    mime_type: str
+    size: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    download_url: str
+    created_at: datetime
+
+
+class RunEventOut(BaseModel):
+    seq: int
+    type: str
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class AgentRunOut(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    agent_type: str
+    intent: str
+    source_run_id: UUID | None
+    source_artifact_id: UUID | None
+    input: str
+    stage: str
+    status: str
+    answer: str
+    public_state: dict[str, Any]
+    error: str | None
+    events: list[RunEventOut] = Field(default_factory=list)
+    artifacts: list[ArtifactOut] = Field(default_factory=list)
+    files: list[FileOut] = Field(default_factory=list)
+    skill: SkillSummary | None = None
+    created_at: datetime
+    updated_at: datetime
