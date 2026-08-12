@@ -195,13 +195,13 @@ flowchart LR
 ### 2.3 代码结构建议
 
 ```text
-web/
+frontend/
 ├── src/pages/          # Chat、Agents、Settings
 ├── src/features/       # 消息流、上传、Agent Run
 ├── src/components/     # 通用 UI
 └── src/lib/            # API、SSE、Markdown
 
-server/
+backend/
 ├── app/api/            # FastAPI 路由与 schema
 ├── app/chat/           # 普通对话编排
 ├── app/files/          # 解析、分块、检索
