@@ -29,7 +29,11 @@ from app.db.base import AppSettings, Base, Conversation, MemorySummary, Message,
 from app.files.service import FileValidationError, validate_upload
 from app.integrations.qwen import QwenAdapter
 from app.integrations.tavily import SearchResult, TavilyAdapter
-from app.memory.service import parse_memory_command, refine_idle_memory_summary
+from app.memory.service import (
+    _fallback_memory_chat,
+    parse_memory_command,
+    refine_idle_memory_summary,
+)
 from app.skills.service import normalize_skill_name
 
 
@@ -75,6 +79,16 @@ def test_redaction_and_memory_safety() -> None:
         "remember",
         "我偏好简短回复",
     )
+
+
+def test_memory_chat_fallback_replaces_an_explicit_preference() -> None:
+    decision = _fallback_memory_chat("用户喜欢苹果。", "我现在喜欢吃梨了")
+    assert decision.updated_summary == "我喜欢吃梨。"
+    assert "更新" in decision.reply
+
+    question = _fallback_memory_chat("用户喜欢苹果。", "你记住了什么？")
+    assert question.updated_summary is None
+    assert "用户喜欢苹果" in question.reply
 
 
 def test_upload_validation_checks_mime_and_magic() -> None:

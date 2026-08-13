@@ -162,6 +162,46 @@ def test_single_memory_summary_api_and_commands(mvp_client: TestClient) -> None:
     assert mvp_client.get("/api/memory-summary").json()["content"] == ""
 
 
+def test_memory_summary_chat_can_answer_and_replace_memory(mvp_client: TestClient) -> None:
+    updated = mvp_client.put(
+        "/api/memory-summary", json={"content": "用户喜欢苹果。"}
+    )
+    assert updated.status_code == 200
+
+    question = mvp_client.post(
+        "/api/memory-summary/messages", json={"content": "你记住了什么？"}
+    )
+    assert question.status_code == 200
+    assert question.json()["changed"] is False
+    assert "用户喜欢苹果" in question.json()["assistant_message"]["content"]
+
+    correction = mvp_client.post(
+        "/api/memory-summary/messages", json={"content": "我现在喜欢吃梨了"}
+    )
+    assert correction.status_code == 200
+    assert correction.json()["changed"] is True
+    assert correction.json()["summary"]["content"] == "我喜欢吃梨。"
+    assert correction.json()["assistant_message"]["memory_changed"] is True
+
+    history = mvp_client.get("/api/memory-summary/messages")
+    assert history.status_code == 200
+    assert [item["role"] for item in history.json()] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+
+    rejected = mvp_client.post(
+        "/api/memory-summary/messages",
+        json={"content": "我的 API_KEY 是 sk-example123456"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["changed"] is False
+    assert "不会" in rejected.json()["assistant_message"]["content"]
+    assert rejected.json()["summary"]["content"] == "我喜欢吃梨。"
+
+
 def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestClient) -> None:
     conversation_id = create_conversation(mvp_client)
     renamed = mvp_client.patch(

@@ -238,6 +238,21 @@ class MemorySummary(Base):
     )
 
 
+class MemoryChatMessage(Base):
+    __tablename__ = "memory_chat_messages"
+
+    id: Mapped[UUID] = uuid_pk_column()
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    memory_changed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class StoredFile(Base):
     __tablename__ = "files"
 

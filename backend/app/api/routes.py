@@ -37,6 +37,9 @@ from app.api.schemas import (
     ConversationPatch,
     FileOut,
     HealthResponse,
+    MemoryChatMessageOut,
+    MemoryChatRequest,
+    MemoryChatResponse,
     MemorySummaryOut,
     MemorySummaryUpdate,
     MessageOut,
@@ -60,6 +63,7 @@ from app.db.base import (
     AgentRun,
     Artifact,
     Conversation,
+    MemoryChatMessage,
     MemorySummary,
     Message,
     MessageFile,
@@ -73,8 +77,10 @@ from app.files.service import FileValidationError, create_file
 from app.files.storage import get_storage
 from app.integrations.qwen import QwenAdapter
 from app.memory.service import (
+    chat_with_memory,
     get_app_settings,
     get_memory_summary_record,
+    list_memory_chat_messages,
     refine_idle_memory_summary,
 )
 from app.skills.service import normalize_skill_name
@@ -613,6 +619,42 @@ async def clear_memory_summary(session: SessionDep) -> None:
     summary.content = ""
     summary.source = "manual"
     summary.source_conversation_id = None
+    await session.commit()
+
+
+@router.get("/memory-summary/messages", response_model=list[MemoryChatMessageOut])
+async def memory_chat_history(session: SessionDep) -> list[MemoryChatMessage]:
+    return await list_memory_chat_messages(session)
+
+
+@router.post("/memory-summary/messages", response_model=MemoryChatResponse)
+async def create_memory_chat_message(
+    payload: MemoryChatRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
+) -> MemoryChatResponse:
+    app_settings = await get_app_settings(session, user.id)
+    if not app_settings.memory_enabled:
+        raise HTTPException(409, "Memory 已关闭")
+    user_message, assistant_message, result = await chat_with_memory(
+        session, settings, payload.content.strip(), user.id
+    )
+    return MemoryChatResponse(
+        user_message=user_message,
+        assistant_message=assistant_message,
+        summary=result.summary,
+        changed=result.changed,
+    )
+
+
+@router.delete("/memory-summary/messages", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_memory_chat_history(
+    session: SessionDep, user: CurrentUserDep
+) -> None:
+    messages = await list_memory_chat_messages(session, user.id)
+    for message in messages:
+        await session.delete(message)
     await session.commit()
 
 

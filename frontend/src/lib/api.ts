@@ -60,6 +60,21 @@ export type MemorySummary = {
   updated_at: string
 }
 
+export type MemoryChatMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  memory_changed: boolean
+  created_at: string
+}
+
+export type MemoryChatResponse = {
+  user_message: MemoryChatMessage
+  assistant_message: MemoryChatMessage
+  summary: MemorySummary
+  changed: boolean
+}
+
 export type ToolCall = {
   id: string
   seq: number
@@ -341,6 +356,10 @@ export const memorySummaryApi = {
   get: () => api<MemorySummary>('/api/memory-summary'),
   update: (content: string) => api<MemorySummary>('/api/memory-summary', jsonInit('PUT', { content })),
   clear: () => api<void>('/api/memory-summary', { method: 'DELETE' }),
+  messages: () => api<MemoryChatMessage[]>('/api/memory-summary/messages'),
+  chat: (content: string) =>
+    api<MemoryChatResponse>('/api/memory-summary/messages', jsonInit('POST', { content })),
+  clearMessages: () => api<void>('/api/memory-summary/messages', { method: 'DELETE' }),
 }
 
 export const settingsApi = {
