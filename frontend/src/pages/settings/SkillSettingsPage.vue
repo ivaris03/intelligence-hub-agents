@@ -83,7 +83,7 @@ async function removeSkill(skill: Skill) {
   <p v-if="loading" class="loading-state"><span></span>读取设置…</p>
 
   <section v-if="!loading" class="settings-section">
-    <header><div><span class="section-kicker">SKILL</span><h2>任务技能</h2><p>显式 @ 选择优先；历史消息保存不可变快照。</p></div><span>{{ skills.length }} 个</span></header>
+    <header><div><span class="section-kicker">SKILL</span><h2>任务技能</h2><p>选择器支持显式调用；未选择时可自动匹配，@ 不会触发调用。历史消息保存不可变快照。</p></div><span>{{ skills.length }} 个</span></header>
     <div class="manage-list">
       <article v-for="skill in skills" :key="skill.id" class="manage-item">
         <div><div class="item-title"><b>{{ skill.name }}</b><span :class="{ off: !skill.enabled }">{{ skill.enabled ? '已启用' : '已停用' }}</span></div><p>{{ skill.description || '暂无描述' }}</p></div>
