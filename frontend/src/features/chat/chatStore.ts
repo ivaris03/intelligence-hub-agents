@@ -46,6 +46,7 @@ function emptyMessage(content = ''): Message {
     parts: [],
     tool_calls: [],
     files: [],
+    skills: [],
   }
 }
 
@@ -63,6 +64,7 @@ function emptyRun(conversationId: string, agentType: AgentType, input: string): 
     events: [],
     artifacts: [],
     files: [],
+    skills: [],
     created_at: now(),
     updated_at: now(),
   }
@@ -78,7 +80,7 @@ export const useChatStore = defineStore('chat', () => {
   const mode = ref<'chat' | 'work'>('chat')
   const agentType = ref<AgentType>('image')
   const selectedFileIds = ref<string[]>([])
-  const selectedSkillId = ref('')
+  const selectedSkillIds = ref<string[]>([])
   const sourceArtifactId = ref('')
   const controller = ref<AbortController | null>(null)
   const activeMessageId = ref<string | null>(null)
@@ -146,6 +148,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingMode.value = null
     activeConversationId.value = id
     selectedFileIds.value = []
+    selectedSkillIds.value = []
     sourceArtifactId.value = ''
     loading.value = true
     try {
@@ -171,6 +174,7 @@ export const useChatStore = defineStore('chat', () => {
     runs.value = []
     files.value = []
     selectedFileIds.value = []
+    selectedSkillIds.value = []
     sourceArtifactId.value = ''
     error.value = ''
     choosingMode.value = true
@@ -180,6 +184,7 @@ export const useChatStore = defineStore('chat', () => {
   function chooseMode(conversationMode: 'chat' | 'work') {
     if (isStreaming.value || loading.value) return
     mode.value = conversationMode
+    selectedSkillIds.value = []
     pendingMode.value = conversationMode
     choosingMode.value = false
   }
@@ -223,6 +228,10 @@ export const useChatStore = defineStore('chat', () => {
         name: String(event.name ?? ''),
         description: String(event.description ?? ''),
       }
+    }
+    if (event.type === 'skills.selected') {
+      answer.skills = event.skills as Message['skills']
+      answer.skill = answer.skills[0] ?? null
     }
     if (event.type === 'tool.started') {
       answer.tool_calls.push({
@@ -276,7 +285,8 @@ export const useChatStore = defineStore('chat', () => {
       run.intent = String(event.intent) as AgentRun['intent']
       run.status = String(event.status) as AgentRun['status']
       if (event.public_state) run.public_state = event.public_state as Record<string, unknown>
-      if (event.skill) run.skill = event.skill as AgentRun['skill']
+      if (event.skills) run.skills = event.skills as AgentRun['skills']
+      else if (event.skill) run.skills = [event.skill as NonNullable<AgentRun['skill']>]
     }
     if (event.type === 'run.stage') {
       run.stage = String(event.stage)
@@ -342,7 +352,7 @@ export const useChatStore = defineStore('chat', () => {
           content: cleaned,
           mode: 'chat',
           file_ids: selectedFileIds.value,
-          ...(selectedSkillId.value ? { skill_id: selectedSkillId.value } : {}),
+          skill_ids: selectedSkillIds.value,
         },
         (event) => handleMessageEvent(answer, event),
         controller.value.signal,
@@ -370,7 +380,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     const run = emptyRun(conversationId, agentType.value, content)
     run.files = selectedFiles
-    run.skill = skills.value.find((skill) => skill.id === selectedSkillId.value) ?? null
+    run.skills = skills.value.filter((skill) => selectedSkillIds.value.includes(skill.id))
     runs.value.push(run)
     controller.value = new AbortController()
     try {
@@ -380,7 +390,7 @@ export const useChatStore = defineStore('chat', () => {
           agent_type: agentType.value,
           input: content,
           file_ids: selectedFileIds.value,
-          ...(selectedSkillId.value ? { skill_id: selectedSkillId.value } : {}),
+          skill_ids: selectedSkillIds.value,
           ...(agentType.value === 'slides' && sourceArtifactId.value
             ? { intent: 'MODIFY' as const, source_artifact_id: sourceArtifactId.value }
             : {}),
@@ -526,7 +536,7 @@ export const useChatStore = defineStore('chat', () => {
     mode,
     agentType,
     selectedFileIds,
-    selectedSkillId,
+    selectedSkillIds,
     sourceArtifactId,
     slideArtifacts,
     timeline,

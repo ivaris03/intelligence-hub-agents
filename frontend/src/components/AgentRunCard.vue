@@ -54,7 +54,7 @@ function artifactTitles(metadata: Record<string, unknown>) {
       </header>
       <div class="run-progress"><span :class="{ done: run.status === 'completed' }"></span></div>
       <div class="run-context">
-        <span v-if="run.skill">@{{ run.skill.name }}</span>
+        <span v-for="skill in run.skills" :key="skill.id || skill.name">Skill · {{ skill.name }}</span>
         <span v-if="run.public_state.memory_summary">用户记忆摘要</span>
         <span v-if="run.public_state.framework">{{ run.public_state.framework }}</span>
       </div>

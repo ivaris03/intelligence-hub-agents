@@ -133,6 +133,14 @@ CREATE TABLE message_parts (
     UNIQUE (message_id, seq)
 );
 
+CREATE TABLE message_skills (
+    message_id UUID NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
+    skill_snapshot_id UUID NOT NULL REFERENCES skill_snapshots (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (message_id, skill_snapshot_id),
+    UNIQUE (message_id, position)
+);
+
 CREATE TABLE tool_calls (
     id UUID PRIMARY KEY,
     message_id UUID REFERENCES messages (id) ON DELETE CASCADE,

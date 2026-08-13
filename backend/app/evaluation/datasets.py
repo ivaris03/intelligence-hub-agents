@@ -42,7 +42,10 @@ RAG_EXAMPLES = [
                 ("storage", "产物可以保存在本地目录或 MinIO 对象存储中。"),
                 ("database", "会话、消息和运行状态由 PostgreSQL 持久化。"),
                 ("search", "联网请求通过 Tavily MCP 搜索，普通问答不会自动联网。"),
-                ("skills", "Skill 启用后可显式选择或自动单选。"),
+                (
+                    "skills",
+                    "Skill 可通过输入框下方的选择器显式调用，也可按任务自动匹配。",
+                ),
                 ("memory", "Memory 只注入少量与当前问题相关的长期信息。"),
             ),
         },

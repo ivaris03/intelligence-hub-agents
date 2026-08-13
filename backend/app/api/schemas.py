@@ -62,6 +62,7 @@ class MessageRequest(BaseModel):
     agent_type: AgentType | None = None
     file_ids: list[UUID] = Field(default_factory=list, max_length=3)
     skill_id: UUID | None = None
+    skill_ids: list[UUID] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_mode(self):
@@ -69,7 +70,15 @@ class MessageRequest(BaseModel):
             raise ValueError("Chat 模式不能指定 Agent")
         if self.mode == "work" and self.agent_type is None:
             raise ValueError("Work 模式必须指定 Agent")
+        if self.skill_id and self.skill_ids:
+            raise ValueError("skill_id 与 skill_ids 不能同时提交")
+        if len(set(self.skill_ids)) != len(self.skill_ids):
+            raise ValueError("不能重复选择同一个 Skill")
         return self
+
+    @property
+    def effective_skill_ids(self) -> list[UUID]:
+        return self.skill_ids or ([self.skill_id] if self.skill_id else [])
 
 
 class MessagePartOut(BaseModel):
@@ -125,6 +134,7 @@ class MessageOut(BaseModel):
     tool_calls: list[ToolCallOut] = Field(default_factory=list)
     files: list[FileOut] = Field(default_factory=list)
     skill: SkillSummary | None = None
+    skills: list[SkillSummary] = Field(default_factory=list)
     run_id: UUID | None = None
 
 
@@ -198,9 +208,22 @@ class AgentRunRequest(BaseModel):
     input: str = Field(min_length=1, max_length=20_000)
     file_ids: list[UUID] = Field(default_factory=list, max_length=3)
     skill_id: UUID | None = None
+    skill_ids: list[UUID] = Field(default_factory=list, max_length=8)
     intent: Literal["CREATE", "MODIFY", "RESUME"] | None = None
     source_run_id: UUID | None = None
     source_artifact_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_skills(self):
+        if self.skill_id and self.skill_ids:
+            raise ValueError("skill_id 与 skill_ids 不能同时提交")
+        if len(set(self.skill_ids)) != len(self.skill_ids):
+            raise ValueError("不能重复选择同一个 Skill")
+        return self
+
+    @property
+    def effective_skill_ids(self) -> list[UUID]:
+        return self.skill_ids or ([self.skill_id] if self.skill_id else [])
 
 
 class AgentRunCommand(BaseModel):
@@ -246,5 +269,6 @@ class AgentRunOut(BaseModel):
     artifacts: list[ArtifactOut] = Field(default_factory=list)
     files: list[FileOut] = Field(default_factory=list)
     skill: SkillSummary | None = None
+    skills: list[SkillSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

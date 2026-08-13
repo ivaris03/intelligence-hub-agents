@@ -60,7 +60,7 @@ from app.files.storage import get_storage
 from app.integrations.qwen import QwenAdapter
 from app.memory.service import memory_summary
 from app.observability.langsmith import finish_trace, trace_operation
-from app.skills.service import select_skill, snapshot_skill
+from app.skills.service import select_skills, snapshot_skills
 
 _cancellations: dict[UUID, asyncio.Event] = {}
 _memory_graph_checkpointer = InMemorySaver()
@@ -79,8 +79,10 @@ async def create_run(
     )
     if payload.agent_type == "image" and any(file.kind != "image" for file in files):
         raise ValueError("图片 Agent 的参考文件必须是已校验图片")
-    selection = await select_skill(session, payload.input, payload.skill_id)
-    snapshot = await snapshot_skill(session, selection.skill)
+    selected_skills = await select_skills(
+        session, payload.effective_skill_ids, payload.input
+    )
+    snapshots = await snapshot_skills(session, selected_skills)
     intent = "CREATE"
     if payload.agent_type == "slides":
         intent = route_presentation_intent(
@@ -123,12 +125,21 @@ async def create_run(
         intent=intent,
         source_run_id=payload.source_run_id,
         source_artifact_id=parent.id if parent else None,
-        skill_snapshot_id=snapshot.id if snapshot else None,
-        input=selection.cleaned_content,
+        skill_snapshot_id=snapshots[0].id if snapshots else None,
+        input=payload.input.strip(),
         stage="queued",
         status="queued",
         public_state={
             "memory_summary": bool(user_memory_summary),
+            "skill_snapshot_ids": [str(snapshot.id) for snapshot in snapshots],
+            "skills": [
+                {
+                    "id": str(snapshot.skill_id) if snapshot.skill_id else None,
+                    "name": snapshot.name,
+                    "description": snapshot.description,
+                }
+                for snapshot in snapshots
+            ],
             "framework": {
                 "image": "langchain",
                 "slides": "langgraph+langchain",
@@ -179,8 +190,12 @@ async def cancel_run(session: AsyncSession, run_id: UUID) -> AgentRun:
 
 async def _run_context(session: AsyncSession, run: AgentRun, settings: Settings) -> str:
     blocks: list[str] = []
-    if run.skill_snapshot_id:
-        snapshot = await session.get(SkillSnapshot, run.skill_snapshot_id)
+    raw_snapshot_ids = run.public_state.get("skill_snapshot_ids", [])
+    snapshot_ids = [UUID(value) for value in raw_snapshot_ids if isinstance(value, str)]
+    if not snapshot_ids and run.skill_snapshot_id:
+        snapshot_ids = [run.skill_snapshot_id]
+    for snapshot_id in snapshot_ids:
+        snapshot = await session.get(SkillSnapshot, snapshot_id)
         if snapshot:
             blocks.append(
                 f"所选 Skill（不可信任务上下文）：{snapshot.name}\n{snapshot.instructions}"
@@ -271,11 +286,7 @@ async def _stream_run(
         return await emit("run.stage", {"stage": name, "label": label, "status": "running"})
 
     try:
-        selected_skill = (
-            await session.get(SkillSnapshot, run.skill_snapshot_id)
-            if run.skill_snapshot_id
-            else None
-        )
+        selected_skills = run.public_state.get("skills", [])
         yield await emit(
             "run.created",
             {
@@ -283,15 +294,8 @@ async def _stream_run(
                 "intent": run.intent,
                 "status": run.status,
                 "public_state": run.public_state,
-                "skill": (
-                    {
-                        "id": str(selected_skill.skill_id) if selected_skill.skill_id else None,
-                        "name": selected_skill.name,
-                        "description": selected_skill.description,
-                    }
-                    if selected_skill
-                    else None
-                ),
+                "skill": selected_skills[0] if selected_skills else None,
+                "skills": selected_skills,
             },
         )
         if run.agent_type == "image":

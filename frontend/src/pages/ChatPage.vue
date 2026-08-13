@@ -39,11 +39,6 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
           {{ chat.mode === 'chat' ? 'Chat' : 'Work' }}
         </span>
         <template v-if="(chat.activeConversation || chat.pendingMode) && chat.mode === 'work'">
-          <select v-model="chat.agentType" class="agent-select" aria-label="选择 Agent" :disabled="chat.isStreaming">
-            <option value="image">图片 Agent</option>
-            <option value="slides">演示 Agent</option>
-            <option value="research">研究 Agent</option>
-          </select>
           <select
             v-if="chat.agentType === 'slides' && chat.slideArtifacts.length"
             v-model="chat.sourceArtifactId"
@@ -117,7 +112,9 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
       <ChatComposer
         v-if="(chat.activeConversation || chat.pendingMode) && !chat.choosingMode"
         v-model="draft"
-        v-model:selected-skill-id="chat.selectedSkillId"
+        v-model:selected-skill-ids="chat.selectedSkillIds"
+        v-model:agent-type="chat.agentType"
+        :mode="chat.mode"
         :streaming="chat.isStreaming"
         :files="chat.files"
         :selected-file-ids="chat.selectedFileIds"

@@ -61,6 +61,7 @@ from app.db.base import (
     MemorySummary,
     Message,
     MessageFile,
+    MessageSkill,
     Skill,
     StoredFile,
 )
@@ -294,6 +295,9 @@ async def _message_query(session: AsyncSession, conversation_id: UUID):
                     selectinload(Message.tool_calls),
                     selectinload(Message.file_links).selectinload(MessageFile.file),
                     selectinload(Message.skill_snapshot),
+                    selectinload(Message.skill_links).selectinload(
+                        MessageSkill.skill_snapshot
+                    ),
                 )
                 .order_by(Message.created_at, Message.id)
             )
@@ -308,6 +312,22 @@ def _file_out(file: StoredFile) -> dict[str, Any]:
 
 
 def _message_out(message: Message) -> MessageOut:
+    skills = [
+        {
+            "id": link.skill_snapshot.skill_id,
+            "name": link.skill_snapshot.name,
+            "description": link.skill_snapshot.description,
+        }
+        for link in message.skill_links
+    ]
+    if not skills and message.skill_snapshot:
+        skills = [
+            {
+                "id": message.skill_snapshot.skill_id,
+                "name": message.skill_snapshot.name,
+                "description": message.skill_snapshot.description,
+            }
+        ]
     return MessageOut(
         id=message.id,
         conversation_id=message.conversation_id,
@@ -338,14 +358,9 @@ def _message_out(message: Message) -> MessageOut:
         ],
         files=[FileOut.model_validate(link.file) for link in message.file_links],
         skill=(
-            {
-                "id": message.skill_snapshot.skill_id,
-                "name": message.skill_snapshot.name,
-                "description": message.skill_snapshot.description,
-            }
-            if message.skill_snapshot
-            else None
+            skills[0] if skills else None
         ),
+        skills=skills,
         run_id=message.run_id,
     )
 
@@ -378,7 +393,7 @@ async def post_message(
             agent_type=payload.agent_type,
             input=payload.content,
             file_ids=payload.file_ids,
-            skill_id=payload.skill_id,
+            skill_ids=payload.effective_skill_ids,
         )
         try:
             run = await create_run(session, run_payload, settings)
@@ -656,6 +671,15 @@ async def start_agent_run(
 
 
 def _run_out(run: AgentRun) -> AgentRunOut:
+    skills = run.public_state.get("skills", [])
+    if not skills and run.skill_snapshot:
+        skills = [
+            {
+                "id": run.skill_snapshot.skill_id,
+                "name": run.skill_snapshot.name,
+                "description": run.skill_snapshot.description,
+            }
+        ]
     return AgentRunOut(
         id=run.id,
         conversation_id=run.conversation_id,
@@ -681,14 +705,9 @@ def _run_out(run: AgentRun) -> AgentRunOut:
         artifacts=[artifact_payload(artifact) for artifact in run.artifacts],
         files=[FileOut.model_validate(link.file) for link in run.file_links],
         skill=(
-            {
-                "id": run.skill_snapshot.skill_id,
-                "name": run.skill_snapshot.name,
-                "description": run.skill_snapshot.description,
-            }
-            if run.skill_snapshot
-            else None
+            skills[0] if skills else None
         ),
+        skills=skills,
         created_at=run.created_at,
         updated_at=run.updated_at,
     )

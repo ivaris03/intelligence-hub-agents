@@ -119,6 +119,11 @@ class Message(Base):
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
     skill_snapshot: Mapped[SkillSnapshot | None] = relationship()
+    skill_links: Mapped[list[MessageSkill]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="MessageSkill.position",
+    )
     parts: Mapped[list[MessagePart]] = relationship(
         back_populates="message",
         cascade="all, delete-orphan",
@@ -257,6 +262,22 @@ class MessageFile(Base):
 
     message: Mapped[Message] = relationship(back_populates="file_links")
     file: Mapped[StoredFile] = relationship()
+
+
+class MessageSkill(Base):
+    __tablename__ = "message_skills"
+    __table_args__ = (UniqueConstraint("message_id", "position"),)
+
+    message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    skill_snapshot_id: Mapped[UUID] = mapped_column(
+        ForeignKey("skill_snapshots.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+
+    message: Mapped[Message] = relationship(back_populates="skill_links")
+    skill_snapshot: Mapped[SkillSnapshot] = relationship()
 
 
 class AgentRun(Base):

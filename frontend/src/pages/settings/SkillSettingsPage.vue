@@ -86,7 +86,7 @@ async function removeSkill(skill: Skill) {
     <header><div><span class="section-kicker">SKILL</span><h2>任务技能</h2><p>显式 @ 选择优先；历史消息保存不可变快照。</p></div><span>{{ skills.length }} 个</span></header>
     <div class="manage-list">
       <article v-for="skill in skills" :key="skill.id" class="manage-item">
-        <div><div class="item-title"><b>@{{ skill.name }}</b><span :class="{ off: !skill.enabled }">{{ skill.enabled ? '已启用' : '已停用' }}</span></div><p>{{ skill.description || '暂无描述' }}</p></div>
+        <div><div class="item-title"><b>{{ skill.name }}</b><span :class="{ off: !skill.enabled }">{{ skill.enabled ? '已启用' : '已停用' }}</span></div><p>{{ skill.description || '暂无描述' }}</p></div>
         <div class="item-actions">
           <button @click="editSkill(skill)">编辑</button><button @click="toggleSkill(skill)">{{ skill.enabled ? '停用' : '启用' }}</button>
           <button v-if="pendingSkillDeleteId !== skill.id" class="danger" @click="pendingSkillDeleteId = skill.id">删除</button>

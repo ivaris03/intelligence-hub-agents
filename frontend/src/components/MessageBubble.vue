@@ -36,7 +36,9 @@ async function copy() {
       <div v-if="message.files.length" class="message-files">
         <span v-for="file in message.files" :key="file.id">{{ file.kind === 'image' ? '▧' : '▤' }} {{ file.name }}</span>
       </div>
-      <span v-if="message.skill" class="skill-badge">@{{ message.skill.name }}</span>
+      <span v-for="skill in message.skills" :key="skill.id || skill.name" class="skill-badge">
+        Skill · {{ skill.name }}
+      </span>
       <details v-if="message.reasoning" :open="message.status === 'streaming'" class="reasoning">
         <summary>思考过程</summary>
         <p>{{ message.reasoning }}</p>

@@ -53,7 +53,7 @@
 | WEB-02 | Chat 联网调用与来源展示 | 只有明确请求才搜索，回答展示真实链接 | CHAT-02/WEB-01 |
 | SKILL-01 | Skill 数据模型与 CRUD API | 可创建、查看、编辑、启停和删除 | FND-02 |
 | SKILL-02 | Skill 设置页面 | 名称、描述、指令可管理；名称重复有提示 | SKILL-01/FND-06 |
-| SKILL-03 | `@Skill` 与自然语言选择 | 显式选择优先；自动选择至多一个且服务端复验 | SKILL-01/CHAT-02 |
+| SKILL-03 | Skill 调用 | 选择器可显式多选并直接注入 System Prompt；未选择时可按任务自动匹配一个 Skill；`@Skill` 不触发调用 | SKILL-01/CHAT-02 |
 | SKILL-04 | Skill 快照与调用展示 | 完整指令仅选中后加载；消息显示所用 Skill，历史不受后续编辑影响 | SKILL-03 |
 | MEMORY-01 | 用户记忆摘要模型与总开关 | 默认开启；只保存一份摘要，可查看、编辑、清空和启停，记录最近来源与更新时间 | FND-02 |
 | MEMORY-02 | Memory 设置页面 | 可查看、编辑、清空和启停用户记忆摘要 | MEMORY-01/FND-06 |

@@ -75,6 +75,7 @@ export type Message = {
   tool_calls: ToolCall[]
   files: FileRecord[]
   skill?: SkillSummary | null
+  skills: SkillSummary[]
   run_id?: string | null
 }
 
@@ -116,6 +117,7 @@ export type AgentRun = {
   artifacts: Artifact[]
   files: FileRecord[]
   skill?: SkillSummary | null
+  skills: SkillSummary[]
   created_at: string
   updated_at: string
 }
@@ -135,6 +137,7 @@ type ChatPayload = {
   agent_type?: AgentType
   file_ids?: string[]
   skill_id?: string
+  skill_ids?: string[]
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -309,7 +312,7 @@ export const runsApi = {
       agent_type: AgentType
       input: string
       file_ids?: string[]
-      skill_id?: string
+      skill_ids?: string[]
       intent?: 'CREATE' | 'MODIFY' | 'RESUME'
       source_run_id?: string
       source_artifact_id?: string

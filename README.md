@@ -7,7 +7,7 @@ Intelligence Hub 是一个面向个人工作区的 ChatGPT 风格 Agent Hub。�
 - 会话新建、切换、改名、删除、搜索与刷新恢复；回答支持 Markdown、思考区、工具详情、停止、重试、自动标题和单个推荐问题。
 - 上传 `txt`、`md`、`pdf`、`docx`、`png`、`jpg`、`jpeg`、`webp`；单文件上限 20 MB、单次最多 3 个。文档支持定位、分块、Qwen Embedding 与 PostgreSQL/pgvector 相似度检索，图片走多模态输入。
 - 显式联网请求通过 Tavily Remote MCP 搜索，普通问答不会自动搜索；文件和网页来源均持久化展示。
-- Skill 完整 CRUD、启停、`@Skill`/自动单选和不可变调用快照。
+- Skill 完整 CRUD、启停、选择器显式调用、任务自动匹配和不可变调用快照；Chat 与 Work 均支持多选 Skill。
 - 单份用户记忆摘要、总开关、对话“记住/忘记”、每轮 System Prompt 注入，以及闲置 30 分钟后的游标式安全提炼。
 - 图片 Agent：LangChain 结构化 `ImageBrief`、参考图、受控 Qwen Image 调用、预览/下载/重试。
 - 演示 Agent：LangGraph 大纲中断确认、LangChain 结构化页面、PPTX 生成、定向修改、版本链和 PostgreSQL 检查点恢复。

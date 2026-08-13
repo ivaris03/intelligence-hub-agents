@@ -26,49 +26,49 @@ class SkillSelection:
 async def select_skill(
     session: AsyncSession, content: str, explicit_skill_id: UUID | None = None
 ) -> SkillSelection:
-    if explicit_skill_id:
-        skill = await session.scalar(
-            select(Skill).where(Skill.id == explicit_skill_id, Skill.enabled.is_(True))
-        )
-        if skill is None:
+    skills = await select_skills(
+        session,
+        [explicit_skill_id] if explicit_skill_id else [],
+        content,
+    )
+    return SkillSelection(
+        skills[0] if skills else None,
+        content,
+        "explicit" if explicit_skill_id else ("automatic" if skills else None),
+    )
+
+
+async def select_skills(
+    session: AsyncSession,
+    skill_ids: list[UUID],
+    content: str | None = None,
+) -> list[Skill]:
+    if skill_ids:
+        skills = (
+            await session.scalars(
+                select(Skill).where(Skill.id.in_(skill_ids), Skill.enabled.is_(True))
+            )
+        ).all()
+        by_id = {skill.id: skill for skill in skills}
+        if any(skill_id not in by_id for skill_id in skill_ids):
             raise ValueError("所选 Skill 不存在或已停用")
-        return SkillSelection(skill, _remove_explicit_mention(content, skill.name), "explicit")
+        return [by_id[skill_id] for skill_id in skill_ids]
+    if not content:
+        return []
 
-    summaries = (
-        await session.execute(
-            select(Skill.id, Skill.name, Skill.description).where(Skill.enabled.is_(True))
-        )
-    ).all()
-    if not summaries:
-        return SkillSelection(None, content)
-
-    normalized_content = unicodedata.normalize("NFKC", content)
-    explicit: tuple[UUID, str] | None = None
-    for skill_id, name, _ in sorted(summaries, key=lambda row: len(row.name), reverse=True):
-        if re.search(
-            rf"(?<!\w)@{re.escape(name)}(?=\s|$|[，,。.!！?？:：])", normalized_content, re.I
-        ):
-            explicit = (skill_id, name)
-            break
-    if explicit:
-        skill = await session.get(Skill, explicit[0])
-        return SkillSelection(skill, _remove_explicit_mention(content, explicit[1]), "explicit")
-
-    content_terms = _terms(content)
-    ranked: list[tuple[float, UUID]] = []
-    for skill_id, name, description in summaries:
-        name_terms = _terms(name)
-        description_terms = _terms(description)
-        score = len(content_terms & name_terms) * 3 + len(content_terms & description_terms)
-        if normalize_skill_name(name) in normalize_skill_name(content):
+    enabled = (await session.scalars(select(Skill).where(Skill.enabled.is_(True)))).all()
+    ranked: list[tuple[float, Skill]] = []
+    for skill in enabled:
+        candidate = _remove_at_mention(content, skill.name)
+        content_terms = _terms(candidate)
+        score = len(content_terms & _terms(skill.name)) * 3
+        score += len(content_terms & _terms(skill.description))
+        if normalize_skill_name(skill.name) in normalize_skill_name(candidate):
             score += 5
         if score > 0:
-            ranked.append((float(score), skill_id))
-    if not ranked:
-        return SkillSelection(None, content)
+            ranked.append((float(score), skill))
     ranked.sort(key=lambda pair: pair[0], reverse=True)
-    skill = await session.get(Skill, ranked[0][1])
-    return SkillSelection(skill, content, "automatic")
+    return [ranked[0][1]] if ranked else []
 
 
 def _terms(text: str) -> set[str]:
@@ -76,11 +76,13 @@ def _terms(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", lower))
 
 
-def _remove_explicit_mention(content: str, name: str) -> str:
-    cleaned = re.sub(
-        rf"(?<!\w)@{re.escape(name)}(?=\s|$|[，,。.!！?？:：])", "", content, count=1, flags=re.I
+def _remove_at_mention(content: str, name: str) -> str:
+    return re.sub(
+        rf"(?<!\w)@{re.escape(name)}(?=\s|$|[，,。.!！?？:：])",
+        "",
+        content,
+        flags=re.I,
     )
-    return cleaned.strip() or content.strip()
 
 
 async def snapshot_skill(session: AsyncSession, skill: Skill | None) -> SkillSnapshot | None:
@@ -99,3 +101,12 @@ async def snapshot_skill(session: AsyncSession, skill: Skill | None) -> SkillSna
     session.add(snapshot)
     await session.flush()
     return snapshot
+
+
+async def snapshot_skills(session: AsyncSession, skills: list[Skill]) -> list[SkillSnapshot]:
+    snapshots: list[SkillSnapshot] = []
+    for skill in skills:
+        snapshot = await snapshot_skill(session, skill)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    return snapshots

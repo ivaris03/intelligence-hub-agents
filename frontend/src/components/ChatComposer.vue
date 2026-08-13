@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import type { FileRecord, Skill } from '@/lib/api'
+import type { AgentType, FileRecord, Skill } from '@/lib/api'
 
 const props = defineProps<{
   modelValue: string
@@ -9,12 +9,15 @@ const props = defineProps<{
   files: FileRecord[]
   selectedFileIds: string[]
   skills: Skill[]
-  selectedSkillId: string
+  selectedSkillIds: string[]
+  mode: 'chat' | 'work'
+  agentType: AgentType
   uploadProgress: Record<string, number>
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  'update:selectedSkillId': [value: string]
+  'update:selectedSkillIds': [value: string[]]
+  'update:agentType': [value: AgentType]
   send: [value: string]
   stop: []
   addFiles: [files: FileList]
@@ -22,17 +25,33 @@ const emit = defineEmits<{
 }>()
 const fileInput = ref<HTMLInputElement | null>(null)
 const showFiles = ref(false)
+const showSkills = ref(false)
 const content = computed({
   get: () => props.modelValue,
   set: (value: string) => emit('update:modelValue', value),
 })
 const selectedFiles = computed(() => props.files.filter((file) => props.selectedFileIds.includes(file.id)))
+const selectedSkills = computed(() => props.skills.filter((skill) => props.selectedSkillIds.includes(skill.id)))
 
 function submit() {
   if (!content.value.trim() || props.streaming) return
   emit('send', content.value)
   content.value = ''
   showFiles.value = false
+  showSkills.value = false
+}
+
+function toggleSkills() {
+  showSkills.value = !showSkills.value
+  showFiles.value = false
+}
+
+function toggleSkill(id: string) {
+  const selected = props.selectedSkillIds.includes(id)
+  const next = selected
+    ? props.selectedSkillIds.filter((item) => item !== id)
+    : [...props.selectedSkillIds, id]
+  emit('update:selectedSkillIds', next)
 }
 
 function chooseFiles(event: Event) {
@@ -49,13 +68,17 @@ function readableSize(bytes: number) {
 
 <template>
   <div class="composer-shell">
-    <div v-if="selectedFiles.length || Object.keys(uploadProgress).length" class="attachment-strip">
+    <div v-if="selectedFiles.length || selectedSkills.length || Object.keys(uploadProgress).length" class="attachment-strip">
       <span v-for="file in selectedFiles" :key="file.id" class="attachment-chip">
         {{ file.kind === 'image' ? '▧' : '▤' }} {{ file.name }}
         <button type="button" aria-label="移除文件" @click="$emit('toggleFile', file.id)">×</button>
       </span>
       <span v-for="(progress, name) in uploadProgress" :key="name" class="attachment-chip uploading">
         {{ name }} · {{ progress }}%
+      </span>
+      <span v-for="skill in selectedSkills" :key="skill.id" class="attachment-chip skill-chip">
+        Skill · {{ skill.name }}
+        <button type="button" :aria-label="`移除 Skill ${skill.name}`" @click="toggleSkill(skill.id)">×</button>
       </span>
     </div>
     <form class="composer" @submit.prevent="submit">
@@ -83,6 +106,28 @@ function readableSize(bytes: number) {
         <p v-if="!files.length">尚未上传文件</p>
         <button type="button" class="upload-new" @click="fileInput?.click()">＋ 上传新文件</button>
       </div>
+      <div v-if="showSkills" class="skill-popover">
+        <div class="popover-head">
+          <b>选择 Skill</b>
+          <small>可多选</small>
+        </div>
+        <p class="skill-call-hint">
+          这里选择属于显式调用，会直接注入 System Prompt；不选择时，系统也可以根据任务自动调用已启用的 Skill。
+        </p>
+        <button
+          v-for="skill in skills"
+          :key="skill.id"
+          type="button"
+          class="skill-option"
+          :class="{ selected: selectedSkillIds.includes(skill.id) }"
+          :aria-pressed="selectedSkillIds.includes(skill.id)"
+          @click="toggleSkill(skill.id)"
+        >
+          <span><b>{{ skill.name }}</b><small>{{ skill.description || '未填写描述' }}</small></span>
+          <span>{{ selectedSkillIds.includes(skill.id) ? '✓' : '' }}</span>
+        </button>
+        <p v-if="!skills.length">尚无可用 Skill，请先在设置中创建并启用。</p>
+      </div>
       <div class="composer-actions">
         <div class="composer-left-actions">
           <input
@@ -93,16 +138,22 @@ function readableSize(bytes: number) {
             accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp"
             @change="chooseFiles"
           />
-          <button type="button" class="icon-button" title="添加文件" @click="showFiles = !showFiles">＋</button>
+          <button type="button" class="icon-button" title="添加文件" @click="showFiles = !showFiles; showSkills = false">＋</button>
           <select
-            class="skill-select"
-            :value="selectedSkillId"
-            aria-label="选择 Skill"
-            @change="$emit('update:selectedSkillId', ($event.target as HTMLSelectElement).value)"
+            v-if="mode === 'work'"
+            class="agent-select composer-agent-select"
+            :value="agentType"
+            aria-label="选择 Agent"
+            :disabled="streaming"
+            @change="$emit('update:agentType', ($event.target as HTMLSelectElement).value as AgentType)"
           >
-            <option value="">@ Skill · 自动</option>
-            <option v-for="skill in skills" :key="skill.id" :value="skill.id">@{{ skill.name }}</option>
+            <option value="image">图片 Agent</option>
+            <option value="slides">演示 Agent</option>
+            <option value="research">研究 Agent</option>
           </select>
+          <button type="button" class="skill-select" aria-haspopup="true" :aria-expanded="showSkills" @click="toggleSkills">
+            Skill{{ selectedSkillIds.length ? ` · ${selectedSkillIds.length}` : '' }}
+          </button>
         </div>
         <button v-if="streaming" type="button" class="send-button stop" title="停止" @click="$emit('stop')">■</button>
         <button v-else type="submit" class="send-button" :disabled="!content.trim()" title="发送">↑</button>

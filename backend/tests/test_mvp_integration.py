@@ -124,7 +124,7 @@ def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestCli
     response = mvp_client.post(
         f"/api/conversations/{conversation_id}/messages",
         json={
-            "content": "@简洁写作 概括项目目标",
+            "content": "概括项目目标",
             "mode": "chat",
             "file_ids": [file_id],
             "skill_id": skill["id"],
@@ -151,6 +151,97 @@ def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestCli
 
     search = mvp_client.get("/api/conversations", params={"q": "项目目标"}).json()
     assert search and search[0]["match_snippet"]
+
+
+def test_skill_mentions_are_ignored_and_work_accepts_multiple_skills(
+    mvp_client: TestClient,
+) -> None:
+    skill_ids: list[str] = []
+    for name, instruction in (
+        ("简洁写作", "先给结论。"),
+        ("风险检查", "补充主要风险。"),
+    ):
+        response = mvp_client.post(
+            "/api/skills",
+            json={
+                "name": name,
+                "description": instruction,
+                "instructions": instruction,
+                "enabled": True,
+            },
+        )
+        assert response.status_code == 201
+        skill_ids.append(response.json()["id"])
+
+    chat_id = create_conversation(mvp_client)
+    mentioned = mvp_client.post(
+        f"/api/conversations/{chat_id}/messages",
+        json={"content": "@简洁写作 这只是普通文字", "mode": "chat"},
+    )
+    assert mentioned.status_code == 200
+    assert "event: skill.selected" not in mentioned.text
+    chat_messages = mvp_client.get(f"/api/conversations/{chat_id}/messages").json()
+    assert chat_messages[-1]["skill"] is None
+
+    automatic = mvp_client.post(
+        f"/api/conversations/{chat_id}/messages",
+        json={"content": "请做风险检查", "mode": "chat"},
+    )
+    assert automatic.status_code == 200
+    assert "event: skill.selected" in automatic.text
+    automatic_message = mvp_client.get(
+        f"/api/conversations/{chat_id}/messages"
+    ).json()[-1]
+    assert [skill["name"] for skill in automatic_message["skills"]] == ["风险检查"]
+
+    selected = mvp_client.post(
+        f"/api/conversations/{chat_id}/messages",
+        json={
+            "content": "同时应用两个 Skill",
+            "mode": "chat",
+            "skill_ids": skill_ids,
+        },
+    )
+    assert selected.status_code == 200
+    assert "event: skills.selected" in selected.text
+    chat_messages = mvp_client.get(f"/api/conversations/{chat_id}/messages").json()
+    assert [skill["name"] for skill in chat_messages[-1]["skills"]] == [
+        "简洁写作",
+        "风险检查",
+    ]
+    regenerated = mvp_client.post(f"/api/messages/{chat_messages[-1]['id']}/regenerate")
+    assert regenerated.status_code == 200
+    regenerated_message = mvp_client.get(
+        f"/api/conversations/{chat_id}/messages"
+    ).json()[-1]
+    assert [skill["name"] for skill in regenerated_message["skills"]] == [
+        "简洁写作",
+        "风险检查",
+    ]
+
+    work_id = create_conversation(mvp_client, "work")
+    started = mvp_client.post(
+        "/api/agent-runs",
+        json={
+            "conversation_id": work_id,
+            "agent_type": "image",
+            "input": "生成一张知识中心插画",
+            "skill_ids": skill_ids,
+        },
+    )
+    assert started.status_code == 200
+    run = mvp_client.get(f"/api/conversations/{work_id}/agent-runs").json()[0]
+    assert [skill["name"] for skill in run["skills"]] == ["简洁写作", "风险检查"]
+
+    multiple_agents = mvp_client.post(
+        "/api/agent-runs",
+        json={
+            "conversation_id": work_id,
+            "agent_type": ["image", "slides"],
+            "input": "不能同时选择两个 Agent",
+        },
+    )
+    assert multiple_agents.status_code == 422
 
 
 def test_chat_and_work_use_separate_conversations(mvp_client: TestClient) -> None:
