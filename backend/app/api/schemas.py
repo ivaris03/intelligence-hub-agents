@@ -187,6 +187,8 @@ class AppSettingsOut(BaseModel):
     memory_enabled: bool
     web_search_enabled: bool
     appearance: str
+    chat_model: str
+    agent_model: str
     model_ready: bool
     tavily_ready: bool
     storage_backend: str

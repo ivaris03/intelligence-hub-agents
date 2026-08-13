@@ -203,7 +203,7 @@ async def stream_run(
     action: str | None = None,
 ):
     thinking_effort = run.public_state.get("thinking_effort", "medium")
-    if thinking_effort not in {"low", "medium", "high"}:
+    if thinking_effort not in {"none", "low", "medium", "high"}:
         thinking_effort = "medium"
     settings = settings.with_thinking_effort(thinking_effort)
     with trace_operation(

@@ -5,6 +5,7 @@ import {
   conversationsApi,
   messagesApi,
   runsApi,
+  settingsApi,
   skillsApi,
   uploadFile,
   type AgentRun,
@@ -76,6 +77,8 @@ export const useChatStore = defineStore('chat', () => {
   const runs = ref<AgentRun[]>([])
   const files = ref<FileRecord[]>([])
   const skills = ref<Skill[]>([])
+  const chatModel = ref('Qwen')
+  const agentModel = ref('Qwen')
   const mode = ref<'chat' | 'work'>('chat')
   const agentType = ref<AgentType>('image')
   const thinkingEffort = ref<ThinkingEffort>('medium')
@@ -94,6 +97,7 @@ export const useChatStore = defineStore('chat', () => {
   const activeConversation = computed(
     () => conversations.value.find((item) => item.id === activeConversationId.value) ?? null,
   )
+  const activeModelName = computed(() => (mode.value === 'chat' ? chatModel.value : agentModel.value))
   const enabledSkills = computed(() => skills.value.filter((skill) => skill.enabled))
   const isStreaming = computed(() => controller.value !== null)
   const slideArtifacts = computed(() =>
@@ -119,9 +123,15 @@ export const useChatStore = defineStore('chat', () => {
     loading.value = true
     error.value = ''
     try {
-      const [items, skillItems] = await Promise.all([conversationsApi.list(), skillsApi.list()])
+      const [items, skillItems, appSettings] = await Promise.all([
+        conversationsApi.list(),
+        skillsApi.list(),
+        settingsApi.get(),
+      ])
       conversations.value = items
       skills.value = skillItems
+      chatModel.value = appSettings.chat_model
+      agentModel.value = appSettings.agent_model
       if (items.length) await selectConversation(items[0].id)
       else choosingMode.value = true
     } catch (cause) {
@@ -535,6 +545,7 @@ export const useChatStore = defineStore('chat', () => {
     mode,
     agentType,
     thinkingEffort,
+    activeModelName,
     selectedFileIds,
     selectedSkillId,
     sourceArtifactId,

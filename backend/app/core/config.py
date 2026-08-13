@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ThinkingEffort = Literal["low", "medium", "high"]
+ThinkingEffort = Literal["none", "low", "medium", "high"]
 
 
 class Settings(BaseSettings):
@@ -37,7 +37,6 @@ class Settings(BaseSettings):
         "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
     )
     qwen_embedding_dimensions: int = 1024
-    qwen_thinking_budget: int = 1024
     qwen_thinking_effort: ThinkingEffort = "medium"
 
     langsmith_tracing: bool = False
@@ -82,13 +81,6 @@ class Settings(BaseSettings):
     def langgraph_database_url(self) -> str:
         """Return a psycopg-compatible URL for LangGraph's Postgres checkpointer."""
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-
-    @property
-    def effective_qwen_thinking_budget(self) -> int:
-        """Map the UI effort level around the server-configured medium budget."""
-
-        multiplier = {"low": 0.5, "medium": 1, "high": 4}[self.qwen_thinking_effort]
-        return max(1, int(self.qwen_thinking_budget * multiplier))
 
     def with_thinking_effort(self, effort: ThinkingEffort) -> "Settings":
         return self.model_copy(update={"qwen_thinking_effort": effort})

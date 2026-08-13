@@ -53,11 +53,8 @@ class QwenAdapter:
         ):
             yield item
 
-    def thinking_parameters(self) -> dict[str, bool | int]:
-        return {
-            "enable_thinking": True,
-            "thinking_budget": self.settings.effective_qwen_thinking_budget,
-        }
+    def thinking_parameters(self) -> dict[str, str]:
+        return {"reasoning_effort": self.settings.qwen_thinking_effort}
 
     async def stream_chat(
         self,

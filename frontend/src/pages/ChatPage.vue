@@ -61,17 +61,6 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
         <span class="conversation-title">
           {{ chat.activeConversation?.title ?? (chat.pendingMode ? '等待第一句话…' : '新会话') }}
         </span>
-        <div class="model-controls">
-          <span class="model-pill">Qwen · 服务端</span>
-          <label class="thinking-effort" title="调整本轮模型用于思考的 Token 预算">
-            <span>思考</span>
-            <select v-model="chat.thinkingEffort" :disabled="chat.isStreaming" aria-label="选择思考强度">
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
-          </label>
-        </div>
       </header>
 
       <section ref="conversationView" class="conversation-view" aria-live="polite">
@@ -128,6 +117,8 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
         v-if="(chat.activeConversation || chat.pendingMode) && !chat.choosingMode"
         v-model="draft"
         v-model:selected-skill-id="chat.selectedSkillId"
+        v-model:thinking-effort="chat.thinkingEffort"
+        :model-name="chat.activeModelName"
         :streaming="chat.isStreaming"
         :files="chat.files"
         :selected-file-ids="chat.selectedFileIds"

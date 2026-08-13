@@ -83,7 +83,7 @@ Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空�
 | `DATABASE_URL` | SQLAlchemy 异步 PostgreSQL 地址；LangGraph 会自动转换为 psycopg 地址 |
 | `DASHSCOPE_API_KEY` | Qwen Chat、Vision、Embedding 与 Image |
 | `QWEN_*_MODEL` | 分别覆盖 Chat、Work、Vision、Embedding 和图片模型 |
-| `QWEN_THINKING_BUDGET` | 前端“中”思考强度的基准预算，默认 1024 tokens；“低”为 0.5 倍，“高”为 4 倍 |
+| `QWEN_THINKING_EFFORT` | 默认思考强度，可选 `none`、`low`、`medium`、`high`，默认 `medium` |
 | `TAVILY_API_KEY` / `TAVILY_MCP_URL` | Tavily Remote MCP 联网搜索 |
 | `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` | Chat 与三个 Agent 的链路追踪和离线评估 |
 | `STORAGE_BACKEND` | `local` 或 `minio` |

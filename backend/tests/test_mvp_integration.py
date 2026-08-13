@@ -177,10 +177,10 @@ def test_chat_and_work_accept_per_request_thinking_effort(
     ).json()[-1]
     regenerated = mvp_client.post(
         f"/api/messages/{assistant['id']}/regenerate",
-        json={"thinking_effort": "low"},
+        json={"thinking_effort": "none"},
     )
     assert regenerated.status_code == 200
-    assert observed_efforts[-1] == "low"
+    assert observed_efforts[-1] == "none"
 
     work_id = create_conversation(mvp_client, "work")
     work = mvp_client.post(

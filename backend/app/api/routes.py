@@ -539,6 +539,8 @@ async def read_settings(session: SessionDep, settings: SettingsDep) -> AppSettin
         memory_enabled=stored.memory_enabled,
         web_search_enabled=stored.web_search_enabled,
         appearance=stored.appearance,
+        chat_model=settings.qwen_chat_model,
+        agent_model=settings.qwen_agent_model,
         model_ready=settings.model_ready,
         tavily_ready=settings.tavily_ready,
         storage_backend=settings.storage_backend,

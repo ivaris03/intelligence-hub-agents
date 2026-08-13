@@ -1,5 +1,5 @@
 export type AgentType = 'image' | 'slides' | 'research'
-export type ThinkingEffort = 'low' | 'medium' | 'high'
+export type ThinkingEffort = 'none' | 'low' | 'medium' | 'high'
 export type StreamEvent = { type: string; seq: number; [key: string]: unknown }
 
 export type Conversation = {
@@ -125,6 +125,8 @@ export type AppSettings = {
   memory_enabled: boolean
   web_search_enabled: boolean
   appearance: 'system' | 'light' | 'dark'
+  chat_model: string
+  agent_model: string
   model_ready: boolean
   tavily_ready: boolean
   storage_backend: string

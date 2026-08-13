@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import type { FileRecord, Skill } from '@/lib/api'
+import type { FileRecord, Skill, ThinkingEffort } from '@/lib/api'
 
 const props = defineProps<{
   modelValue: string
@@ -10,11 +10,14 @@ const props = defineProps<{
   selectedFileIds: string[]
   skills: Skill[]
   selectedSkillId: string
+  modelName: string
+  thinkingEffort: ThinkingEffort
   uploadProgress: Record<string, number>
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:selectedSkillId': [value: string]
+  'update:thinkingEffort': [value: ThinkingEffort]
   send: [value: string]
   stop: []
   addFiles: [files: FileList]
@@ -104,8 +107,24 @@ function readableSize(bytes: number) {
             <option v-for="skill in skills" :key="skill.id" :value="skill.id">@{{ skill.name }}</option>
           </select>
         </div>
-        <button v-if="streaming" type="button" class="send-button stop" title="停止" @click="$emit('stop')">■</button>
-        <button v-else type="submit" class="send-button" :disabled="!content.trim()" title="发送">↑</button>
+        <div class="composer-submit-actions">
+          <label class="model-effort-control" title="当前模型和本轮思考强度">
+            <span>{{ modelName }}</span>
+            <select
+              :value="thinkingEffort"
+              :disabled="streaming"
+              aria-label="选择思考强度"
+              @change="$emit('update:thinkingEffort', ($event.target as HTMLSelectElement).value as ThinkingEffort)"
+            >
+              <option value="none">无</option>
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
+          </label>
+          <button v-if="streaming" type="button" class="send-button stop" title="停止" @click="$emit('stop')">■</button>
+          <button v-else type="submit" class="send-button" :disabled="!content.trim()" title="发送">↑</button>
+        </div>
       </div>
     </form>
     <p class="composer-hint">AI 可能会犯错，请核对重要信息。上传内容仅用于当前本地工作区。</p>
