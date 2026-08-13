@@ -40,6 +40,7 @@ from app.api.schemas import (
     MemoryChatMessageOut,
     MemoryChatRequest,
     MemoryChatResponse,
+    MemoryRefineOut,
     MemorySummaryOut,
     MemorySummaryUpdate,
     MessageOut,
@@ -82,6 +83,7 @@ from app.memory.service import (
     get_memory_summary_record,
     list_memory_chat_messages,
     refine_idle_memory_summary,
+    refine_pending_memory_summary,
 )
 from app.skills.service import normalize_skill_name
 
@@ -656,6 +658,23 @@ async def clear_memory_chat_history(
     for message in messages:
         await session.delete(message)
     await session.commit()
+
+
+@router.post("/memory-summary/refine", response_model=MemoryRefineOut)
+async def refine_pending_memory(
+    session: SessionDep, user: CurrentUserDep
+) -> MemoryRefineOut:
+    app_settings = await get_app_settings(session, user.id)
+    if not app_settings.memory_enabled:
+        raise HTTPException(409, "Memory 已关闭")
+    result = await refine_pending_memory_summary(session, user.id)
+    summary = await get_memory_summary_record(session, user.id)
+    await session.refresh(summary)
+    return MemoryRefineOut(
+        added_facts=result.added_facts,
+        processed_messages=result.processed_messages,
+        summary=summary,
+    )
 
 
 @router.post("/maintenance/memory-summary/refine")

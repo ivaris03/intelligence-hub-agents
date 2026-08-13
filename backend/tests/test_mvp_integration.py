@@ -202,6 +202,26 @@ def test_memory_summary_chat_can_answer_and_replace_memory(mvp_client: TestClien
     assert rejected.json()["summary"]["content"] == "我喜欢吃梨。"
 
 
+def test_manual_memory_refinement_uses_unprocessed_messages(mvp_client: TestClient) -> None:
+    conversation_id = create_conversation(mvp_client)
+    response = mvp_client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"content": "我常用 Rust", "mode": "chat"},
+    )
+    assert response.status_code == 200
+
+    refined = mvp_client.post("/api/memory-summary/refine")
+    assert refined.status_code == 200
+    assert refined.json()["processed_messages"] == 1
+    assert refined.json()["added_facts"] == 1
+    assert refined.json()["summary"]["content"] == "我常用 Rust。"
+
+    repeated = mvp_client.post("/api/memory-summary/refine")
+    assert repeated.status_code == 200
+    assert repeated.json()["processed_messages"] == 0
+    assert repeated.json()["added_facts"] == 0
+
+
 def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestClient) -> None:
     conversation_id = create_conversation(mvp_client)
     renamed = mvp_client.patch(

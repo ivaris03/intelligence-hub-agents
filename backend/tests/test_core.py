@@ -33,6 +33,7 @@ from app.memory.service import (
     _fallback_memory_chat,
     parse_memory_command,
     refine_idle_memory_summary,
+    refine_pending_memory_summary,
 )
 from app.skills.service import normalize_skill_name
 
@@ -333,6 +334,54 @@ def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() ->
             )
             await session.commit()
             assert await refine_idle_memory_summary(session, now=now) == 0
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_manual_memory_refinement_processes_active_conversations_once() -> None:
+    async def scenario() -> None:
+        engine = create_async_engine("sqlite+aiosqlite://")
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        now = datetime.now(UTC)
+        async with sessions() as session:
+            user = User(
+                phone="13700000001",
+                password_hash="unused",
+                display_name="测试用户",
+                role="member",
+                is_active=True,
+            )
+            session.add(user)
+            await session.flush()
+            conversation = Conversation(user_id=user.id, last_activity_at=now)
+            session.add(conversation)
+            await session.flush()
+            session.add(
+                Message(
+                    conversation_id=conversation.id,
+                    role="user",
+                    content="我常用 TypeScript",
+                    status="completed",
+                    created_at=now,
+                )
+            )
+            await session.commit()
+
+            first = await refine_pending_memory_summary(session, user.id)
+            assert first.added_facts == 1
+            assert first.processed_messages == 1
+            summary = await session.scalar(
+                select(MemorySummary).where(MemorySummary.user_id == user.id)
+            )
+            assert summary is not None
+            assert summary.content == "我常用 TypeScript。"
+
+            second = await refine_pending_memory_summary(session, user.id)
+            assert second.added_facts == 0
+            assert second.processed_messages == 0
         await engine.dispose()
 
     asyncio.run(scenario())

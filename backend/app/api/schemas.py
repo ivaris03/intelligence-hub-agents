@@ -242,6 +242,12 @@ class MemoryChatResponse(BaseModel):
     changed: bool
 
 
+class MemoryRefineOut(BaseModel):
+    added_facts: int
+    processed_messages: int
+    summary: MemorySummaryOut
+
+
 class AppSettingsPatch(BaseModel):
     memory_enabled: bool | None = None
     web_search_enabled: bool | None = None

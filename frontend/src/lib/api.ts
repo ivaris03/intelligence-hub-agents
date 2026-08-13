@@ -75,6 +75,12 @@ export type MemoryChatResponse = {
   changed: boolean
 }
 
+export type MemoryRefineResponse = {
+  added_facts: number
+  processed_messages: number
+  summary: MemorySummary
+}
+
 export type ToolCall = {
   id: string
   seq: number
@@ -360,6 +366,7 @@ export const memorySummaryApi = {
   chat: (content: string) =>
     api<MemoryChatResponse>('/api/memory-summary/messages', jsonInit('POST', { content })),
   clearMessages: () => api<void>('/api/memory-summary/messages', { method: 'DELETE' }),
+  refine: () => api<MemoryRefineResponse>('/api/memory-summary/refine', { method: 'POST' }),
 }
 
 export const settingsApi = {

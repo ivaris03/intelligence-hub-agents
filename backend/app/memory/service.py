@@ -46,6 +46,12 @@ class MemoryChatResult:
     summary: MemorySummary
 
 
+@dataclass(slots=True)
+class MemoryRefinementResult:
+    added_facts: int
+    processed_messages: int
+
+
 def normalize_memory(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
@@ -388,38 +394,36 @@ async def chat_with_memory(
     return user_message, assistant_message, MemoryChatResult(decision.reply, changed, summary)
 
 
-async def refine_idle_memory_summary(
-    session: AsyncSession, now: datetime | None = None, user_id: UUID | None = None
-) -> int:
-    if user_id is None:
-        user_ids = (
-            await session.scalars(select(User.id).where(User.is_active.is_(True)))
-        ).all()
-        written = 0
-        for owner_id in user_ids:
-            written += await refine_idle_memory_summary(session, now, owner_id)
-        return written
-
+async def _refine_user_memory_summary(
+    session: AsyncSession,
+    user_id: UUID,
+    *,
+    cutoff: datetime | None,
+) -> MemoryRefinementResult:
     app_settings = await get_app_settings(session, user_id)
     if not app_settings.memory_enabled:
-        return 0
-    cutoff = (now or datetime.now(UTC)) - timedelta(minutes=30)
-    conversations = (
-        await session.scalars(
-            select(Conversation).where(
-                Conversation.user_id == user_id,
-                Conversation.last_activity_at <= cutoff,
-                or_(
-                    Conversation.memory_cursor.is_(None),
-                    Conversation.memory_cursor < Conversation.last_activity_at,
-                ),
+        return MemoryRefinementResult(0, 0)
+    conditions = [
+        Conversation.user_id == user_id,
+        or_(
+            Conversation.memory_cursor.is_(None),
+            Conversation.memory_cursor < Conversation.last_activity_at,
+        ),
+    ]
+    if cutoff is not None:
+        conditions.append(Conversation.last_activity_at <= cutoff)
+    conversations = list(
+        (
+            await session.scalars(
+                select(Conversation).where(*conditions).order_by(Conversation.created_at)
             )
-        )
-    ).all()
+        ).all()
+    )
     summary = await get_memory_summary_record(session, user_id)
     facts = _summary_facts(summary.content)
     signatures = {_subject_signature(fact) for fact in facts}
     written = 0
+    processed_messages = 0
     last_source_conversation_id: UUID | None = None
 
     for conversation in conversations:
@@ -431,6 +435,7 @@ async def refine_idle_memory_summary(
         if conversation.memory_cursor:
             query = query.where(Message.created_at > conversation.memory_cursor)
         messages = (await session.scalars(query.order_by(Message.created_at))).all()
+        processed_messages += len(messages)
         for candidate in _extract_candidates(messages):
             if contains_sensitive_memory(candidate):
                 continue
@@ -461,4 +466,36 @@ async def refine_idle_memory_summary(
         summary.source = "automatic"
         summary.source_conversation_id = last_source_conversation_id
     await session.commit()
-    return written
+    return MemoryRefinementResult(written, processed_messages)
+
+
+async def refine_pending_memory_summary(
+    session: AsyncSession, user_id: UUID | None = None
+) -> MemoryRefinementResult:
+    return await _refine_user_memory_summary(
+        session, user_id or current_user_id(), cutoff=None
+    )
+
+
+async def refine_idle_memory_summary(
+    session: AsyncSession, now: datetime | None = None, user_id: UUID | None = None
+) -> int:
+    if user_id is None:
+        user_ids = (
+            await session.scalars(select(User.id).where(User.is_active.is_(True)))
+        ).all()
+        written = 0
+        cutoff = (now or datetime.now(UTC)) - timedelta(minutes=30)
+        for owner_id in user_ids:
+            result = await _refine_user_memory_summary(
+                session, owner_id, cutoff=cutoff
+            )
+            written += result.added_facts
+        return written
+
+    result = await _refine_user_memory_summary(
+        session,
+        user_id,
+        cutoff=(now or datetime.now(UTC)) - timedelta(minutes=30),
+    )
+    return result.added_facts

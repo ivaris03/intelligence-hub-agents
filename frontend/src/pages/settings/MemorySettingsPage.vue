@@ -19,6 +19,8 @@ const memoryMessages = ref<MemoryChatMessage[]>([])
 const chatDraft = ref('')
 const sending = ref(false)
 const chatScroll = ref<HTMLElement | null>(null)
+const refining = ref(false)
+const refineNotice = ref('')
 
 onMounted(async () => {
   try {
@@ -66,6 +68,29 @@ async function clearMemorySummary() {
     clearMemoryArmed.value = false
   } catch (cause) {
     report(cause)
+  }
+}
+
+async function refineMemorySummary() {
+  if (refining.value || !settings.value?.memory_enabled) return
+  refining.value = true
+  refineNotice.value = ''
+  error.value = ''
+  try {
+    const response = await memorySummaryApi.refine()
+    memorySummary.value = response.summary
+    memoryDraft.value = response.summary.content
+    if (!response.processed_messages) {
+      refineNotice.value = '没有待处理的对话消息'
+    } else if (!response.added_facts) {
+      refineNotice.value = `已处理 ${response.processed_messages} 条消息，没有发现新的稳定记忆`
+    } else {
+      refineNotice.value = `已处理 ${response.processed_messages} 条消息，新增 ${response.added_facts} 条记忆`
+    }
+  } catch (cause) {
+    report(cause)
+  } finally {
+    refining.value = false
   }
 }
 
@@ -121,9 +146,18 @@ function sourceLabel(source: MemorySummary['source']) {
     <header><div><span class="section-kicker">MEMORY</span><h2>用户记忆摘要</h2><p>每次对话都会将整份摘要注入 System Prompt；关闭后不提炼、不写入，也不注入。</p></div><label class="switch"><input :checked="settings.memory_enabled" type="checkbox" aria-label="启用 Memory" @change="toggleMemory" /><span></span></label></header>
     <div class="memory-workspace">
       <form class="editor-card memory-summary-editor" @submit.prevent="saveMemorySummary">
-        <header><div><span class="section-kicker">SUMMARY</span><h3>当前摘要</h3></div></header>
+        <header>
+          <div><span class="section-kicker">SUMMARY</span><h3>当前摘要</h3></div>
+          <button
+            type="button"
+            class="memory-refine-button"
+            :disabled="refining || !settings.memory_enabled"
+            @click="refineMemorySummary"
+          >{{ refining ? '更新中…' : '更新记忆' }}</button>
+        </header>
         <label>摘要内容<textarea v-model="memoryDraft" :disabled="!settings.memory_enabled" rows="12" maxlength="4000" placeholder="例如：用户是一名 Python 开发者，偏好简洁、先给结论的回答。"></textarea></label>
         <small v-if="memorySummary">{{ sourceLabel(memorySummary.source) }} · {{ new Date(memorySummary.updated_at).toLocaleString() }}</small>
+        <small v-if="refineNotice" class="memory-refine-notice">{{ refineNotice }}</small>
         <button class="primary-action" type="submit" :disabled="!settings.memory_enabled">保存摘要</button>
       </form>
 
