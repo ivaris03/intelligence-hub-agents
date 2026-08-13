@@ -153,6 +153,50 @@ def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestCli
     assert search and search[0]["match_snippet"]
 
 
+def test_chat_and_work_accept_per_request_thinking_effort(
+    mvp_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed_efforts: list[str] = []
+
+    async def record_stream(self, messages, **kwargs):
+        del messages, kwargs
+        observed_efforts.append(self.settings.qwen_thinking_effort)
+        yield "text", "完成"
+
+    monkeypatch.setattr(QwenAdapter, "stream_chat", record_stream)
+    conversation_id = create_conversation(mvp_client)
+    response = mvp_client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"content": "深入分析", "mode": "chat", "thinking_effort": "high"},
+    )
+    assert response.status_code == 200
+    assert observed_efforts == ["high"]
+
+    assistant = mvp_client.get(
+        f"/api/conversations/{conversation_id}/messages"
+    ).json()[-1]
+    regenerated = mvp_client.post(
+        f"/api/messages/{assistant['id']}/regenerate",
+        json={"thinking_effort": "low"},
+    )
+    assert regenerated.status_code == 200
+    assert observed_efforts[-1] == "low"
+
+    work_id = create_conversation(mvp_client, "work")
+    work = mvp_client.post(
+        "/api/agent-runs",
+        json={
+            "conversation_id": work_id,
+            "agent_type": "image",
+            "input": "生成一张图",
+            "thinking_effort": "high",
+        },
+    )
+    assert work.status_code == 200
+    runs = mvp_client.get(f"/api/conversations/{work_id}/agent-runs").json()
+    assert runs[0]["public_state"]["thinking_effort"] == "high"
+
+
 def test_chat_and_work_use_separate_conversations(mvp_client: TestClient) -> None:
     chat_id = create_conversation(mvp_client, "chat")
     work_id = create_conversation(mvp_client, "work")

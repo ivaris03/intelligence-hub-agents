@@ -40,6 +40,7 @@ from app.api.schemas import (
     MemorySummaryOut,
     MemorySummaryUpdate,
     MessageOut,
+    MessageRegenerateRequest,
     MessageRequest,
     SkillCreate,
     SkillOut,
@@ -120,7 +121,7 @@ async def chat_stream(payload: ChatRequest, settings: SettingsDep) -> StreamingR
         seq = 0
         try:
             async for kind, delta in QwenAdapter(settings).stream_text(
-                payload.content, payload.mode
+                payload.content, payload.mode, thinking_effort=payload.thinking_effort
             ):
                 seq += 1
                 event = "reasoning.delta" if kind == "reasoning" else "message.delta"
@@ -379,6 +380,7 @@ async def post_message(
             input=payload.content,
             file_ids=payload.file_ids,
             skill_id=payload.skill_id,
+            thinking_effort=payload.thinking_effort,
         )
         try:
             run = await create_run(session, run_payload, settings)
@@ -417,10 +419,18 @@ async def stop_message(message_id: UUID, session: SessionDep) -> MessageOut:
 
 @router.post("/messages/{message_id}/regenerate")
 async def regenerate_message(
-    message_id: UUID, session: SessionDep, settings: SettingsDep
+    message_id: UUID,
+    session: SessionDep,
+    settings: SettingsDep,
+    payload: MessageRegenerateRequest | None = None,
 ) -> StreamingResponse:
     try:
-        prepared = await prepare_regeneration(session, message_id, settings)
+        prepared = await prepare_regeneration(
+            session,
+            message_id,
+            settings,
+            payload.thinking_effort if payload else "medium",
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except (ValueError, FileValidationError) as exc:

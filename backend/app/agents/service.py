@@ -129,6 +129,7 @@ async def create_run(
         status="queued",
         public_state={
             "memory_summary": bool(user_memory_summary),
+            "thinking_effort": payload.thinking_effort,
             "framework": {
                 "image": "langchain",
                 "slides": "langgraph+langchain",
@@ -201,6 +202,10 @@ async def stream_run(
     *,
     action: str | None = None,
 ):
+    thinking_effort = run.public_state.get("thinking_effort", "medium")
+    if thinking_effort not in {"low", "medium", "high"}:
+        thinking_effort = "medium"
+    settings = settings.with_thinking_effort(thinking_effort)
     with trace_operation(
         settings,
         f"intelligence_hub.agent.{run.agent_type}",
@@ -220,6 +225,7 @@ async def stream_run(
             "intent": run.intent,
             "action": action or "start",
             "model": settings.qwen_agent_model,
+            "thinking_effort": thinking_effort,
         },
     ) as trace:
         artifact_payloads: list[dict[str, Any]] = []

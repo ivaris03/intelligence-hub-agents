@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from PIL import Image, ImageDraw
 
-from app.core.config import Settings
+from app.core.config import Settings, ThinkingEffort
 from app.observability.langsmith import finish_trace, trace_operation
 
 
@@ -37,13 +37,27 @@ class QwenAdapter:
             streaming=True,
             timeout=120,
             max_retries=2,
+            **({"extra_body": self.thinking_parameters()} if not vision else {}),
         )
 
-    async def stream_text(self, prompt: str, mode: str = "chat") -> AsyncIterator[tuple[str, str]]:
-        async for item in self.stream_chat(
+    async def stream_text(
+        self,
+        prompt: str,
+        mode: str = "chat",
+        *,
+        thinking_effort: ThinkingEffort = "medium",
+    ) -> AsyncIterator[tuple[str, str]]:
+        adapter = QwenAdapter(self.settings.with_thinking_effort(thinking_effort))
+        async for item in adapter.stream_chat(
             [{"role": "user", "content": prompt}], work=mode == "work"
         ):
             yield item
+
+    def thinking_parameters(self) -> dict[str, bool | int]:
+        return {
+            "enable_thinking": True,
+            "thinking_budget": self.settings.effective_qwen_thinking_budget,
+        }
 
     async def stream_chat(
         self,
@@ -165,12 +179,7 @@ class QwenAdapter:
         # LangChain adapter currently drops that non-standard streaming field.
         # Parse provider SSE directly so the UI can render reasoning separately.
         if not images:
-            payload.update(
-                {
-                    "enable_thinking": True,
-                    "thinking_budget": self.settings.qwen_thinking_budget,
-                }
-            )
+            payload.update(self.thinking_parameters())
         headers = {"Authorization": f"Bearer {self.settings.dashscope_api_key}"}
         timeout = httpx.Timeout(120, connect=15)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:

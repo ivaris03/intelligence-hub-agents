@@ -72,7 +72,11 @@ button { cursor: pointer; }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 0 24px; border-bottom: 1px solid rgba(222,219,210,.75); }
 .session-mode-pill { padding: 5px 9px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .agent-select { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: white; color: #555149; }
-.model-pill { margin-left: auto; color: #8a867e; font-size: 12px; }
+.model-controls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.model-pill { color: #8a867e; font-size: 12px; }
+.thinking-effort { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.thinking-effort select { height: 30px; padding: 0 7px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: white; color: var(--ink); font-size: 11px; }
+.thinking-effort select:disabled { opacity: .55; }
 .conversation-title { max-width: 260px; overflow: hidden; margin-left: 5px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .source-select { max-width: 210px; }
 .conversation-view { min-height: 0; overflow-y: auto; }
@@ -154,7 +158,7 @@ button { cursor: pointer; }
 
 :root[data-theme='dark'] .sidebar, :root[data-theme='dark'] .settings-nav { background: #242825; }
 :root[data-theme='dark'] .chat-main, :root[data-theme='dark'] .settings-layout { background: var(--paper); }
-:root[data-theme='dark'] .composer, :root[data-theme='dark'] .file-popover, :root[data-theme='dark'] .settings-card button, :root[data-theme='dark'] .settings-card select, :root[data-theme='dark'] .editor-card input, :root[data-theme='dark'] .editor-card textarea, :root[data-theme='dark'] .memory-add input, :root[data-theme='dark'] .memory-inline-editor, :root[data-theme='dark'] .item-actions button, :root[data-theme='dark'] .clear-memory-actions > button:not(.danger-outline) { background: #272b28; color: var(--ink); }
+:root[data-theme='dark'] .composer, :root[data-theme='dark'] .file-popover, :root[data-theme='dark'] .thinking-effort select, :root[data-theme='dark'] .settings-card button, :root[data-theme='dark'] .settings-card select, :root[data-theme='dark'] .editor-card input, :root[data-theme='dark'] .editor-card textarea, :root[data-theme='dark'] .memory-add input, :root[data-theme='dark'] .memory-inline-editor, :root[data-theme='dark'] .item-actions button, :root[data-theme='dark'] .clear-memory-actions > button:not(.danger-outline) { background: #272b28; color: var(--ink); }
 :root[data-theme='dark'] .message.user .message-body, :root[data-theme='dark'] .run-request { background: #303530; }
 :root[data-theme='dark'] .run-card, :root[data-theme='dark'] .tool-card { background: rgba(39,43,40,.8); }
 

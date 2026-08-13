@@ -16,6 +16,7 @@ import {
   type RunEvent,
   type Skill,
   type StreamEvent,
+  type ThinkingEffort,
   type ToolCall,
 } from '@/lib/api'
 
@@ -77,6 +78,7 @@ export const useChatStore = defineStore('chat', () => {
   const skills = ref<Skill[]>([])
   const mode = ref<'chat' | 'work'>('chat')
   const agentType = ref<AgentType>('image')
+  const thinkingEffort = ref<ThinkingEffort>('medium')
   const selectedFileIds = ref<string[]>([])
   const selectedSkillId = ref('')
   const sourceArtifactId = ref('')
@@ -342,6 +344,7 @@ export const useChatStore = defineStore('chat', () => {
           content: cleaned,
           mode: 'chat',
           file_ids: selectedFileIds.value,
+          thinking_effort: thinkingEffort.value,
           ...(selectedSkillId.value ? { skill_id: selectedSkillId.value } : {}),
         },
         (event) => handleMessageEvent(answer, event),
@@ -380,6 +383,7 @@ export const useChatStore = defineStore('chat', () => {
           agent_type: agentType.value,
           input: content,
           file_ids: selectedFileIds.value,
+          thinking_effort: thinkingEffort.value,
           ...(selectedSkillId.value ? { skill_id: selectedSkillId.value } : {}),
           ...(agentType.value === 'slides' && sourceArtifactId.value
             ? { intent: 'MODIFY' as const, source_artifact_id: sourceArtifactId.value }
@@ -425,7 +429,12 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push(answer)
     controller.value = new AbortController()
     try {
-      await messagesApi.regenerate(message.id, (event) => handleMessageEvent(answer, event), controller.value.signal)
+      await messagesApi.regenerate(
+        message.id,
+        thinkingEffort.value,
+        (event) => handleMessageEvent(answer, event),
+        controller.value.signal,
+      )
       await reloadActive()
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') answer.status = 'cancelled'
@@ -525,6 +534,7 @@ export const useChatStore = defineStore('chat', () => {
     enabledSkills,
     mode,
     agentType,
+    thinkingEffort,
     selectedFileIds,
     selectedSkillId,
     sourceArtifactId,

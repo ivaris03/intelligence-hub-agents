@@ -1,4 +1,5 @@
 export type AgentType = 'image' | 'slides' | 'research'
+export type ThinkingEffort = 'low' | 'medium' | 'high'
 export type StreamEvent = { type: string; seq: number; [key: string]: unknown }
 
 export type Conversation = {
@@ -135,6 +136,7 @@ type ChatPayload = {
   agent_type?: AgentType
   file_ids?: string[]
   skill_id?: string
+  thinking_effort?: ThinkingEffort
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -243,8 +245,18 @@ export const conversationsApi = {
 
 export const messagesApi = {
   stop: (id: string) => api<Message>(`/api/messages/${id}/stop`, { method: 'POST' }),
-  regenerate: (id: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal) =>
-    streamResponse(`/api/messages/${id}/regenerate`, { method: 'POST' }, onEvent, signal),
+  regenerate: (
+    id: string,
+    thinkingEffort: ThinkingEffort,
+    onEvent: (event: StreamEvent) => void,
+    signal?: AbortSignal,
+  ) =>
+    streamResponse(
+      `/api/messages/${id}/regenerate`,
+      jsonInit('POST', { thinking_effort: thinkingEffort }),
+      onEvent,
+      signal,
+    ),
 }
 
 export function uploadFile(
@@ -313,6 +325,7 @@ export const runsApi = {
       intent?: 'CREATE' | 'MODIFY' | 'RESUME'
       source_run_id?: string
       source_artifact_id?: string
+      thinking_effort?: ThinkingEffort
     },
     onEvent: (event: StreamEvent) => void,
     signal?: AbortSignal,

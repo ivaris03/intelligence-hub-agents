@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.config import ThinkingEffort
+
 AgentType = Literal["image", "slides", "research"]
 
 
@@ -15,6 +17,7 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
     mode: Literal["chat", "work"] = "chat"
     agent_type: AgentType | None = None
+    thinking_effort: ThinkingEffort = "medium"
 
     @model_validator(mode="after")
     def validate_mode(self):
@@ -62,6 +65,7 @@ class MessageRequest(BaseModel):
     agent_type: AgentType | None = None
     file_ids: list[UUID] = Field(default_factory=list, max_length=3)
     skill_id: UUID | None = None
+    thinking_effort: ThinkingEffort = "medium"
 
     @model_validator(mode="after")
     def validate_mode(self):
@@ -70,6 +74,10 @@ class MessageRequest(BaseModel):
         if self.mode == "work" and self.agent_type is None:
             raise ValueError("Work 模式必须指定 Agent")
         return self
+
+
+class MessageRegenerateRequest(BaseModel):
+    thinking_effort: ThinkingEffort = "medium"
 
 
 class MessagePartOut(BaseModel):
@@ -201,6 +209,7 @@ class AgentRunRequest(BaseModel):
     intent: Literal["CREATE", "MODIFY", "RESUME"] | None = None
     source_run_id: UUID | None = None
     source_artifact_id: UUID | None = None
+    thinking_effort: ThinkingEffort = "medium"
 
 
 class AgentRunCommand(BaseModel):

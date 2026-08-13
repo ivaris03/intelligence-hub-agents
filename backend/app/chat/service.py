@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.schemas import MessageRequest
-from app.core.config import Settings
+from app.core.config import Settings, ThinkingEffort
 from app.core.security import redact, remove_unverified_urls
 from app.db.base import (
     Conversation,
@@ -55,6 +55,7 @@ class PreparedMessage:
     content: str
     files: list[StoredFile]
     skill_snapshot: SkillSnapshot | None
+    thinking_effort: ThinkingEffort
     memory_result: MemoryCommandResult | None
     history_before: datetime | None = None
 
@@ -139,7 +140,14 @@ async def prepare_message(
     await session.commit()
     _cancellations[assistant.id] = asyncio.Event()
     return PreparedMessage(
-        conversation, user, assistant, selection.cleaned_content, files, snapshot, memory_result
+        conversation=conversation,
+        user=user,
+        assistant=assistant,
+        content=selection.cleaned_content,
+        files=files,
+        skill_snapshot=snapshot,
+        thinking_effort=payload.thinking_effort,
+        memory_result=memory_result,
     )
 
 
@@ -147,6 +155,7 @@ async def prepare_regeneration(
     session: AsyncSession,
     assistant_id: UUID,
     settings: Settings,
+    thinking_effort: ThinkingEffort = "medium",
 ) -> PreparedMessage:
     source = await session.scalar(
         select(Message)
@@ -204,14 +213,15 @@ async def prepare_regeneration(
     await session.commit()
     _cancellations[regenerated.id] = asyncio.Event()
     return PreparedMessage(
-        conversation,
-        user,
-        regenerated,
-        user.content,
-        files,
-        source.skill_snapshot,
-        None,
-        source.created_at,
+        conversation=conversation,
+        user=user,
+        assistant=regenerated,
+        content=user.content,
+        files=files,
+        skill_snapshot=source.skill_snapshot,
+        thinking_effort=thinking_effort,
+        memory_result=None,
+        history_before=source.created_at,
     )
 
 
@@ -279,6 +289,7 @@ async def _upsert_part(
 async def stream_prepared_message(
     session: AsyncSession, prepared: PreparedMessage, settings: Settings
 ):
+    settings = settings.with_thinking_effort(prepared.thinking_effort)
     tags = ["chat"]
     if any(file.kind == "document" for file in prepared.files):
         tags.append("rag")
@@ -301,6 +312,7 @@ async def stream_prepared_message(
             "conversation_id": str(prepared.conversation.id),
             "assistant_message_id": str(prepared.assistant.id),
             "model": settings.qwen_chat_model,
+            "thinking_effort": prepared.thinking_effort,
         },
     ) as trace:
         sources: list[dict[str, Any]] = []
