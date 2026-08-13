@@ -28,6 +28,7 @@ def mvp_client():
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     settings = Settings(
         database_url=database_url,
+        storage_backend="local",
         storage_path=tmp_path / "storage",
         dashscope_api_key=None,
         tavily_api_key=None,

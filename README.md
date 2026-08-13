@@ -47,7 +47,7 @@ Copy-Item .env.example .env
 启动 PostgreSQL 并执行迁移：
 
 ```powershell
-docker compose up -d postgres
+docker compose up -d postgres minio
 Set-Location backend
 uv sync --dev
 uv run alembic upgrade head
@@ -69,6 +69,8 @@ npm run dev
 ```
 
 打开 <http://127.0.0.1:5173>。健康检查为 <http://127.0.0.1:8000/api/health>，OpenAPI 文档为 <http://127.0.0.1:8000/docs>。
+
+MinIO API 默认监听 <http://127.0.0.1:9000>，管理控制台为 <http://127.0.0.1:9001>。本地默认账号和密码均为 `minioadmin`；后端首次保存文件时会自动创建 `intelligence-hub-agents` bucket。
 
 Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空数据库的完整参考结构，`sql/data.sql` 是迁移后可选的幂等演示数据；不要在同一个数据库上混用参考建表脚本与 Alembic。
 

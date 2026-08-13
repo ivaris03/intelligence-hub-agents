@@ -43,12 +43,12 @@ class Settings(BaseSettings):
 
     tavily_mcp_url: str = "https://mcp.tavily.com/mcp/"
     tavily_api_key: str | None = Field(default=None, repr=False)
-    storage_backend: str = "local"
+    storage_backend: str = "minio"
     storage_path: Path = Path("./storage")
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = Field(default="minioadmin", repr=False)
     minio_secret_key: str = Field(default="minioadmin", repr=False)
-    minio_bucket: str = "intelligence-hub"
+    minio_bucket: str = "intelligence-hub-agents"
     minio_secure: bool = False
 
     max_upload_bytes: int = 20 * 1024 * 1024
