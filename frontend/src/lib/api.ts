@@ -1,6 +1,23 @@
 export type AgentType = 'image' | 'slides' | 'research'
 export type StreamEvent = { type: string; seq: number; [key: string]: unknown }
 
+export type CurrentUser = {
+  id: string
+  phone: string
+  display_name: string
+  role: 'admin' | 'member'
+  permissions: string[]
+  is_active: boolean
+  created_at: string
+}
+
+export type AuthToken = {
+  access_token: string
+  token_type: 'bearer'
+  expires_in: number
+  user: CurrentUser
+}
+
 export type Conversation = {
   id: string
   mode: 'chat' | 'work'
@@ -141,7 +158,7 @@ type ChatPayload = {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init)
+  const response = await fetch(path, withAuth(init))
   if (!response.ok) {
     let detail = `请求失败（${response.status}）`
     try {
@@ -155,6 +172,17 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
+}
+
+function withAuth(init: RequestInit = {}): RequestInit {
+  const token = localStorage.getItem('ih_access_token')
+  return {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.headers ?? {}),
+    },
+  }
 }
 
 function jsonInit(method: string, payload?: unknown): RequestInit {
@@ -182,7 +210,7 @@ async function streamResponse(
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(path, { ...init, signal, headers: { Accept: 'text/event-stream', ...(init.headers ?? {}) } })
+  const response = await fetch(path, withAuth({ ...init, signal, headers: { Accept: 'text/event-stream', ...(init.headers ?? {}) } }))
   if (!response.ok || !response.body) {
     let message = `请求失败（${response.status}）`
     try {
@@ -261,6 +289,8 @@ export function uploadFile(
     data.append('conversation_id', conversationId)
     data.append('upload', file)
     request.open('POST', '/api/files')
+    const token = localStorage.getItem('ih_access_token')
+    if (token) request.setRequestHeader('Authorization', `Bearer ${token}`)
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100))
     }
@@ -336,4 +366,28 @@ export const runsApi = {
   },
   resume: (id: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal) =>
     streamResponse(`/api/agent-runs/${id}/resume`, { method: 'POST' }, onEvent, signal),
+}
+
+export const authApi = {
+  login: (phone: string, password: string) =>
+    api<AuthToken>('/api/auth/login', jsonInit('POST', { phone, password })),
+  me: () => api<CurrentUser>('/api/auth/me'),
+  logout: () => api<void>('/api/auth/logout', { method: 'POST' }),
+}
+
+export async function downloadArtifact(url: string, name: string): Promise<void> {
+  const response = await fetch(url, withAuth())
+  if (!response.ok) throw new Error(`下载失败（${response.status}）`)
+  const objectUrl = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = name
+  anchor.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
+export async function artifactObjectUrl(url: string): Promise<string> {
+  const response = await fetch(url, withAuth())
+  if (!response.ok) throw new Error(`预览加载失败（${response.status}）`)
+  return URL.createObjectURL(await response.blob())
 }

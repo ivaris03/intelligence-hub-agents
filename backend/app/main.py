@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import router
+from app.api.routes import public_router, router
+from app.auth.routes import router as auth_router
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.memory.service import refine_idle_memory_summary
@@ -45,6 +46,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix=settings.api_prefix)
+app.include_router(auth_router, prefix=settings.api_prefix)
+app.include_router(public_router, prefix=settings.api_prefix)
 
 
 @app.get("/", include_in_schema=False)

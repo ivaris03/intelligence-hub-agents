@@ -9,6 +9,28 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 AgentType = Literal["image", "slides", "research"]
 
 
+class LoginRequest(BaseModel):
+    phone: str = Field(pattern=r"^1[3-9]\d{9}$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: UUID
+    phone: str
+    display_name: str
+    role: Literal["admin", "member"]
+    permissions: list[str]
+    is_active: bool
+    created_at: datetime
+
+
+class AuthTokenOut(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
+    user: UserOut
+
+
 class ChatRequest(BaseModel):
     """Compatibility payload for the stateless M0 streaming endpoint."""
 

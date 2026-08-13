@@ -25,7 +25,7 @@ from app.api.schemas import MessageRequest
 from app.chat.service import should_search_web
 from app.core.config import Settings
 from app.core.security import contains_sensitive_memory, redact, remove_unverified_urls
-from app.db.base import AppSettings, Base, Conversation, MemorySummary, Message
+from app.db.base import AppSettings, Base, Conversation, MemorySummary, Message, User
 from app.files.service import FileValidationError, validate_upload
 from app.integrations.qwen import QwenAdapter
 from app.integrations.tavily import SearchResult, TavilyAdapter
@@ -235,7 +235,18 @@ def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() ->
             await connection.run_sync(Base.metadata.create_all)
         now = datetime.now(UTC)
         async with sessions() as session:
-            conversation = Conversation(last_activity_at=now - timedelta(minutes=31))
+            user = User(
+                phone="13900000001",
+                password_hash="unused",
+                display_name="测试用户",
+                role="member",
+                is_active=True,
+            )
+            session.add(user)
+            await session.flush()
+            conversation = Conversation(
+                user_id=user.id, last_activity_at=now - timedelta(minutes=31)
+            )
             session.add(conversation)
             await session.flush()
             session.add(
@@ -254,7 +265,9 @@ def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() ->
             assert len(saved) == 1
             assert saved[0].content == "我偏好简洁回答。"
 
-            second = Conversation(last_activity_at=now - timedelta(minutes=31))
+            second = Conversation(
+                user_id=user.id, last_activity_at=now - timedelta(minutes=31)
+            )
             session.add(second)
             await session.flush()
             session.add(
@@ -272,7 +285,9 @@ def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() ->
             stored_settings = await session.get(AppSettings, 1)
             assert stored_settings is not None
             stored_settings.memory_enabled = False
-            third = Conversation(last_activity_at=now - timedelta(minutes=31))
+            third = Conversation(
+                user_id=user.id, last_activity_at=now - timedelta(minutes=31)
+            )
             session.add(third)
             await session.flush()
             session.add(

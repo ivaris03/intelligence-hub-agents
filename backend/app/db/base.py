@@ -30,10 +30,31 @@ def uuid_pk_column():
     return mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'member')", name="ck_users_role"),
+    )
+
+    id: Mapped[UUID] = uuid_pk_column()
+    phone: Mapped[str] = mapped_column(String(11), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(80))
+    role: Mapped[str] = mapped_column(String(20), default="member", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[UUID] = uuid_pk_column()
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     mode: Mapped[str] = mapped_column(String(20), default="chat", index=True)
     title: Mapped[str] = mapped_column(String(120), default="新会话")
     title_source: Mapped[str] = mapped_column(String(20), default="default")
@@ -59,10 +80,14 @@ class Conversation(Base):
 
 class Skill(Base):
     __tablename__ = "skills"
+    __table_args__ = (UniqueConstraint("user_id", "normalized_name"),)
 
     id: Mapped[UUID] = uuid_pk_column()
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(String(80))
-    normalized_name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    normalized_name: Mapped[str] = mapped_column(String(80), index=True)
     description: Mapped[str] = mapped_column(String(500), default="")
     instructions: Mapped[str] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -183,7 +208,10 @@ class ToolCall(Base):
 class AppSettings(Base):
     __tablename__ = "app_settings"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
     memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     web_search_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     appearance: Mapped[str] = mapped_column(String(20), default="system")
@@ -194,9 +222,11 @@ class AppSettings(Base):
 
 class MemorySummary(Base):
     __tablename__ = "memory_summaries"
-    __table_args__ = (CheckConstraint("id = 1", name="ck_memory_summaries_singleton"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
     content: Mapped[str] = mapped_column(Text, default="")
     source: Mapped[str] = mapped_column(String(20), default="manual")
     source_conversation_id: Mapped[UUID | None] = mapped_column(

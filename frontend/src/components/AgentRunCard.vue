@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { onBeforeUnmount, ref, watch } from 'vue'
+
 import type { AgentRun } from '@/features/chat/chatStore'
+import { artifactObjectUrl, downloadArtifact } from '@/lib/api'
 import { renderMarkdown } from '@/lib/markdown'
 
-defineProps<{ run: AgentRun }>()
+const props = defineProps<{ run: AgentRun }>()
 defineEmits<{ command: [run: AgentRun, action: 'confirm' | 'cancel' | 'retry' | 'resume'] }>()
 
 const agentNames = { image: '图片 Agent', slides: '演示 Agent', research: '研究 Agent' }
@@ -24,6 +27,25 @@ const stageNames: Record<string, string> = {
   failed: '失败',
   cancelled: '已取消',
 }
+const previews = ref<Record<string, string>>({})
+
+watch(
+  () => props.run.artifacts.map((artifact) => `${artifact.id}:${artifact.download_url}`).join('|'),
+  async () => {
+    for (const artifact of props.run.artifacts.filter((item) => item.type === 'image')) {
+      if (!previews.value[artifact.id]) {
+        try {
+          previews.value[artifact.id] = await artifactObjectUrl(artifact.download_url)
+        } catch {
+          // The download action still reports an explicit error if preview loading fails.
+        }
+      }
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => Object.values(previews.value).forEach(URL.revokeObjectURL))
 
 function outline(run: AgentRun) {
   return run.public_state.outline as { title?: string; slides?: string[] } | undefined
@@ -98,7 +120,8 @@ function artifactTitles(metadata: Record<string, unknown>) {
 
       <section v-if="run.artifacts.length" class="artifact-grid">
         <article v-for="artifact in run.artifacts" :key="artifact.id" class="artifact-card">
-          <img v-if="artifact.type === 'image'" :src="artifact.download_url" :alt="artifact.name" />
+          <img v-if="artifact.type === 'image' && previews[artifact.id]" :src="previews[artifact.id]" :alt="artifact.name" />
+          <div v-else-if="artifact.type === 'image'" class="artifact-file-icon">IMG</div>
           <div v-else class="artifact-file-icon">{{ artifact.type === 'pptx' ? 'P' : 'MD' }}</div>
           <div class="artifact-copy">
             <span>{{ artifact.type.toUpperCase() }} · v{{ artifact.version }}</span>
@@ -107,7 +130,7 @@ function artifactTitles(metadata: Record<string, unknown>) {
             <ol v-if="artifact.type === 'pptx' && artifactTitles(artifact.metadata).length" class="slide-preview-list">
               <li v-for="title in artifactTitles(artifact.metadata).slice(0, 5)" :key="title">{{ title }}</li>
             </ol>
-            <a :href="artifact.download_url">下载产物 ↓</a>
+            <button class="artifact-download" type="button" @click="downloadArtifact(artifact.download_url, artifact.name)">下载产物 ↓</button>
           </div>
         </article>
       </section>

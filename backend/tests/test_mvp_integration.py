@@ -11,8 +11,9 @@ from pptx import Presentation
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.auth.security import get_current_user, hash_password
 from app.core.config import Settings, get_settings
-from app.db.base import Base
+from app.db.base import Base, User
 from app.db.session import get_session
 from app.integrations.qwen import QwenAdapter
 from app.main import app
@@ -20,6 +21,7 @@ from app.main import app
 
 @pytest.fixture
 def mvp_client():
+    app.dependency_overrides.pop(get_current_user, None)
     temporary = TemporaryDirectory(prefix=".mvp-test-", dir=Path.cwd())
     tmp_path = Path(temporary.name)
     database_path = tmp_path / "mvp.sqlite3"
@@ -39,6 +41,29 @@ def mvp_client():
     async def create_schema() -> None:
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+        async with sessions() as session:
+            encoded_password = hash_password(
+                "12345678", salt=b"integration-test"
+            )
+            session.add_all(
+                [
+                User(
+                    phone="13900000001",
+                    password_hash=encoded_password,
+                    display_name="测试管理员",
+                    role="admin",
+                    is_active=True,
+                ),
+                User(
+                    phone="13700000001",
+                    password_hash=encoded_password,
+                    display_name="测试用户",
+                    role="member",
+                    is_active=True,
+                ),
+                ]
+            )
+            await session.commit()
 
     async def override_session():
         async with sessions() as session:
@@ -48,6 +73,12 @@ def mvp_client():
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_settings] = lambda: settings
     client = TestClient(app)
+    login = client.post(
+        "/api/auth/login",
+        json={"phone": "13900000001", "password": "12345678"},
+    )
+    assert login.status_code == 200
+    client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
     try:
         yield client
     finally:
@@ -61,6 +92,47 @@ def create_conversation(client: TestClient, mode: str = "chat") -> str:
     response = client.post("/api/conversations", json={"mode": mode})
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def test_auth_rbac_and_workspace_isolation(mvp_client: TestClient) -> None:
+    admin_authorization = mvp_client.headers["Authorization"]
+    admin_conversation_id = create_conversation(mvp_client)
+
+    unauthenticated = mvp_client.get(
+        "/api/conversations", headers={"Authorization": ""}
+    )
+    assert unauthenticated.status_code == 401
+
+    login = mvp_client.post(
+        "/api/auth/login",
+        json={"phone": "13700000001", "password": "12345678"},
+    )
+    assert login.status_code == 200
+    member_authorization = f"Bearer {login.json()['access_token']}"
+    member_headers = {"Authorization": member_authorization}
+    member_conversation = mvp_client.post(
+        "/api/conversations", json={"mode": "chat"}, headers=member_headers
+    )
+    assert member_conversation.status_code == 201
+
+    member_list = mvp_client.get("/api/conversations", headers=member_headers)
+    assert [item["id"] for item in member_list.json()] == [
+        member_conversation.json()["id"]
+    ]
+    assert mvp_client.get(
+        f"/api/conversations/{admin_conversation_id}/messages", headers=member_headers
+    ).status_code == 404
+    assert login.json()["user"]["role"] == "member"
+
+    admin_headers = {"Authorization": admin_authorization}
+    assert mvp_client.get(
+        f"/api/conversations/{member_conversation.json()['id']}/messages",
+        headers=admin_headers,
+    ).status_code == 404
+    administrator = mvp_client.get("/api/auth/me", headers=admin_headers)
+    assert administrator.status_code == 200
+    assert administrator.json()["phone"] == "13900000001"
+    assert administrator.json()["role"] == "admin"
 
 
 def test_single_memory_summary_api_and_commands(mvp_client: TestClient) -> None:

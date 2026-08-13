@@ -9,10 +9,10 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.security import current_user_id
 from app.core.security import contains_sensitive_memory
-from app.db.base import AppSettings, Conversation, MemorySummary, Message
+from app.db.base import AppSettings, Conversation, MemorySummary, Message, User
 
-MEMORY_SUMMARY_ID = 1
 MAX_MEMORY_SUMMARY_CHARS = 4_000
 
 
@@ -27,19 +27,31 @@ def normalize_memory(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
-async def get_app_settings(session: AsyncSession) -> AppSettings:
-    settings = await session.get(AppSettings, 1)
+async def get_app_settings(
+    session: AsyncSession, user_id: UUID | None = None
+) -> AppSettings:
+    owner_id = user_id or current_user_id()
+    settings = await session.scalar(
+        select(AppSettings).where(AppSettings.user_id == owner_id)
+    )
     if settings is None:
-        settings = AppSettings(id=1, memory_enabled=True, web_search_enabled=True)
+        settings = AppSettings(
+            user_id=owner_id, memory_enabled=True, web_search_enabled=True
+        )
         session.add(settings)
         await session.flush()
     return settings
 
 
-async def get_memory_summary_record(session: AsyncSession) -> MemorySummary:
-    summary = await session.get(MemorySummary, MEMORY_SUMMARY_ID)
+async def get_memory_summary_record(
+    session: AsyncSession, user_id: UUID | None = None
+) -> MemorySummary:
+    owner_id = user_id or current_user_id()
+    summary = await session.scalar(
+        select(MemorySummary).where(MemorySummary.user_id == owner_id)
+    )
     if summary is None:
-        summary = MemorySummary(id=MEMORY_SUMMARY_ID, content="", source="manual")
+        summary = MemorySummary(user_id=owner_id, content="", source="manual")
         session.add(summary)
         await session.flush()
     return summary
@@ -187,15 +199,25 @@ def _memory_slot(text: str) -> tuple[str, str] | None:
 
 
 async def refine_idle_memory_summary(
-    session: AsyncSession, now: datetime | None = None
+    session: AsyncSession, now: datetime | None = None, user_id: UUID | None = None
 ) -> int:
-    app_settings = await get_app_settings(session)
+    if user_id is None:
+        user_ids = (
+            await session.scalars(select(User.id).where(User.is_active.is_(True)))
+        ).all()
+        written = 0
+        for owner_id in user_ids:
+            written += await refine_idle_memory_summary(session, now, owner_id)
+        return written
+
+    app_settings = await get_app_settings(session, user_id)
     if not app_settings.memory_enabled:
         return 0
     cutoff = (now or datetime.now(UTC)) - timedelta(minutes=30)
     conversations = (
         await session.scalars(
             select(Conversation).where(
+                Conversation.user_id == user_id,
                 Conversation.last_activity_at <= cutoff,
                 or_(
                     Conversation.memory_cursor.is_(None),
@@ -204,7 +226,7 @@ async def refine_idle_memory_summary(
             )
         )
     ).all()
-    summary = await get_memory_summary_record(session)
+    summary = await get_memory_summary_record(session, user_id)
     facts = _summary_facts(summary.content)
     signatures = {_subject_signature(fact) for fact in facts}
     written = 0

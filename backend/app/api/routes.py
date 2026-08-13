@@ -46,6 +46,7 @@ from app.api.schemas import (
     SkillPatch,
 )
 from app.artifacts.service import artifact_payload
+from app.auth.security import get_current_user
 from app.chat.service import (
     cancel_message,
     prepare_message,
@@ -64,6 +65,7 @@ from app.db.base import (
     MessageSkill,
     Skill,
     StoredFile,
+    User,
 )
 from app.db.session import get_session
 from app.files.service import FileValidationError, create_file
@@ -76,9 +78,11 @@ from app.memory.service import (
 )
 from app.skills.service import normalize_skill_name
 
-router = APIRouter()
+public_router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
 def encode_event(event: str, data: dict[str, Any]) -> str:
@@ -102,7 +106,7 @@ def sse_response(iterator) -> StreamingResponse:
     )
 
 
-@router.get("/health", response_model=HealthResponse)
+@public_router.get("/health", response_model=HealthResponse)
 async def health(settings: SettingsDep) -> HealthResponse:
     return HealthResponse(
         service=settings.app_name,
@@ -170,13 +174,53 @@ def _snippet(text: str, keyword: str, radius: int = 42) -> str:
     return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
 
 
+async def _owned_conversation(
+    session: AsyncSession, conversation_id: UUID, user_id: UUID
+) -> Conversation:
+    conversation = await session.scalar(
+        select(Conversation).where(
+            Conversation.id == conversation_id, Conversation.user_id == user_id
+        )
+    )
+    if conversation is None:
+        raise HTTPException(404, "会话不存在")
+    return conversation
+
+
+async def _owned_message(session: AsyncSession, message_id: UUID, user_id: UUID) -> Message:
+    message = await session.scalar(
+        select(Message)
+        .join(Conversation)
+        .where(Message.id == message_id, Conversation.user_id == user_id)
+    )
+    if message is None:
+        raise HTTPException(404, "消息不存在")
+    return message
+
+
+async def _owned_run(session: AsyncSession, run_id: UUID, user_id: UUID) -> AgentRun:
+    run = await session.scalar(
+        select(AgentRun)
+        .join(Conversation)
+        .where(AgentRun.id == run_id, Conversation.user_id == user_id)
+    )
+    if run is None:
+        raise HTTPException(404, "Agent 运行不存在")
+    return run
+
+
 @router.get("/conversations", response_model=list[ConversationOut])
 async def list_conversations(
     session: SessionDep,
+    user: CurrentUserDep,
     q: Annotated[str | None, Query(max_length=120)] = None,
     mode: Annotated[Literal["chat", "work"] | None, Query()] = None,
 ) -> list[ConversationOut]:
-    query = select(Conversation).order_by(Conversation.updated_at.desc())
+    query = (
+        select(Conversation)
+        .where(Conversation.user_id == user.id)
+        .order_by(Conversation.updated_at.desc())
+    )
     if mode is not None:
         query = query.where(Conversation.mode == mode)
     keyword = (q or "").strip()
@@ -229,11 +273,14 @@ async def list_conversations(
 
 
 @router.post("/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
-async def create_conversation(payload: ConversationCreate, session: SessionDep) -> ConversationOut:
+async def create_conversation(
+    payload: ConversationCreate, session: SessionDep, user: CurrentUserDep
+) -> ConversationOut:
     title = payload.title.strip()
     if payload.mode == "work" and title == "新会话":
         title = "新任务"
     conversation = Conversation(
+        user_id=user.id,
         mode=payload.mode,
         title=title,
         title_source="manual" if title not in {"新会话", "新任务"} else "default",
@@ -246,11 +293,12 @@ async def create_conversation(payload: ConversationCreate, session: SessionDep) 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
 async def patch_conversation(
-    conversation_id: UUID, payload: ConversationPatch, session: SessionDep
+    conversation_id: UUID,
+    payload: ConversationPatch,
+    session: SessionDep,
+    user: CurrentUserDep,
 ) -> ConversationOut:
-    conversation = await session.get(Conversation, conversation_id)
-    if conversation is None:
-        raise HTTPException(404, "会话不存在")
+    conversation = await _owned_conversation(session, conversation_id, user.id)
     conversation.title = payload.title.strip()
     conversation.title_source = "manual"
     await session.commit()
@@ -260,11 +308,14 @@ async def patch_conversation(
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
-    conversation_id: UUID, session: SessionDep, settings: SettingsDep
+    conversation_id: UUID,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> None:
     conversation = await session.scalar(
         select(Conversation)
-        .where(Conversation.id == conversation_id)
+        .where(Conversation.id == conversation_id, Conversation.user_id == user.id)
         .options(
             selectinload(Conversation.files),
             selectinload(Conversation.runs).selectinload(AgentRun.artifacts),
@@ -366,10 +417,10 @@ def _message_out(message: Message) -> MessageOut:
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
-async def list_messages(conversation_id: UUID, session: SessionDep) -> list[MessageOut]:
-    conversation = await session.get(Conversation, conversation_id)
-    if conversation is None:
-        raise HTTPException(404, "会话不存在")
+async def list_messages(
+    conversation_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> list[MessageOut]:
+    conversation = await _owned_conversation(session, conversation_id, user.id)
     if conversation.mode != "chat":
         return []
     return [_message_out(message) for message in await _message_query(session, conversation_id)]
@@ -381,10 +432,9 @@ async def post_message(
     payload: MessageRequest,
     session: SessionDep,
     settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> StreamingResponse:
-    conversation = await session.get(Conversation, conversation_id)
-    if conversation is None:
-        raise HTTPException(404, "会话不存在")
+    conversation = await _owned_conversation(session, conversation_id, user.id)
     if conversation.mode != payload.mode:
         raise HTTPException(409, "Chat 和 Work 不能共用同一个会话")
     if payload.mode == "work":
@@ -410,7 +460,10 @@ async def post_message(
 
 
 @router.post("/messages/{message_id}/stop", response_model=MessageOut)
-async def stop_message(message_id: UUID, session: SessionDep) -> MessageOut:
+async def stop_message(
+    message_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> MessageOut:
+    owned_message = await _owned_message(session, message_id, user.id)
     try:
         await cancel_message(session, message_id)
     except LookupError as exc:
@@ -419,7 +472,7 @@ async def stop_message(message_id: UUID, session: SessionDep) -> MessageOut:
         (
             item
             for item in await _message_query(
-                session, (await session.get(Message, message_id)).conversation_id
+                session, owned_message.conversation_id
             )
             if item.id == message_id
         ),
@@ -432,8 +485,12 @@ async def stop_message(message_id: UUID, session: SessionDep) -> MessageOut:
 
 @router.post("/messages/{message_id}/regenerate")
 async def regenerate_message(
-    message_id: UUID, session: SessionDep, settings: SettingsDep
+    message_id: UUID,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> StreamingResponse:
+    await _owned_message(session, message_id, user.id)
     try:
         prepared = await prepare_regeneration(session, message_id, settings)
     except LookupError as exc:
@@ -444,13 +501,24 @@ async def regenerate_message(
 
 
 @router.get("/skills", response_model=list[SkillOut])
-async def list_skills(session: SessionDep) -> list[Skill]:
-    return list((await session.scalars(select(Skill).order_by(Skill.updated_at.desc()))).all())
+async def list_skills(session: SessionDep, user: CurrentUserDep) -> list[Skill]:
+    return list(
+        (
+            await session.scalars(
+                select(Skill)
+                .where(Skill.user_id == user.id)
+                .order_by(Skill.updated_at.desc())
+            )
+        ).all()
+    )
 
 
 @router.post("/skills", response_model=SkillOut, status_code=status.HTTP_201_CREATED)
-async def create_skill(payload: SkillCreate, session: SessionDep) -> Skill:
+async def create_skill(
+    payload: SkillCreate, session: SessionDep, user: CurrentUserDep
+) -> Skill:
     skill = Skill(
+        user_id=user.id,
         name=payload.name.strip(),
         normalized_name=normalize_skill_name(payload.name),
         description=payload.description.strip(),
@@ -468,8 +536,12 @@ async def create_skill(payload: SkillCreate, session: SessionDep) -> Skill:
 
 
 @router.patch("/skills/{skill_id}", response_model=SkillOut)
-async def patch_skill(skill_id: UUID, payload: SkillPatch, session: SessionDep) -> Skill:
-    skill = await session.get(Skill, skill_id)
+async def patch_skill(
+    skill_id: UUID, payload: SkillPatch, session: SessionDep, user: CurrentUserDep
+) -> Skill:
+    skill = await session.scalar(
+        select(Skill).where(Skill.id == skill_id, Skill.user_id == user.id)
+    )
     if skill is None:
         raise HTTPException(404, "Skill 不存在")
     values = payload.model_dump(exclude_unset=True)
@@ -488,8 +560,12 @@ async def patch_skill(skill_id: UUID, payload: SkillPatch, session: SessionDep) 
 
 
 @router.delete("/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_skill(skill_id: UUID, session: SessionDep) -> None:
-    skill = await session.get(Skill, skill_id)
+async def delete_skill(
+    skill_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> None:
+    skill = await session.scalar(
+        select(Skill).where(Skill.id == skill_id, Skill.user_id == user.id)
+    )
     if skill is None:
         raise HTTPException(404, "Skill 不存在")
     await session.delete(skill)
@@ -533,12 +609,16 @@ async def clear_memory_summary(session: SessionDep) -> None:
 
 
 @router.post("/maintenance/memory-summary/refine")
-async def refine_memory_summary(session: SessionDep) -> dict[str, int]:
-    return {"added_facts": await refine_idle_memory_summary(session)}
+async def refine_memory_summary(
+    session: SessionDep, user: CurrentUserDep
+) -> dict[str, int]:
+    return {"added_facts": await refine_idle_memory_summary(session, user_id=user.id)}
 
 
 @router.get("/settings", response_model=AppSettingsOut)
-async def read_settings(session: SessionDep, settings: SettingsDep) -> AppSettingsOut:
+async def read_settings(
+    session: SessionDep, settings: SettingsDep, user: CurrentUserDep
+) -> AppSettingsOut:
     stored = await get_app_settings(session)
     return AppSettingsOut(
         memory_enabled=stored.memory_enabled,
@@ -552,23 +632,29 @@ async def read_settings(session: SessionDep, settings: SettingsDep) -> AppSettin
 
 @router.patch("/settings", response_model=AppSettingsOut)
 async def patch_settings(
-    payload: AppSettingsPatch, session: SessionDep, settings: SettingsDep
+    payload: AppSettingsPatch,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> AppSettingsOut:
     stored = await get_app_settings(session)
     for key, value in payload.model_dump(exclude_none=True).items():
         setattr(stored, key, value)
     await session.commit()
-    return await read_settings(session, settings)
+    return await read_settings(session, settings, user)
 
 
 @router.patch("/settings/memory", response_model=AppSettingsOut)
 async def patch_memory_setting(
-    payload: AppSettingsPatch, session: SessionDep, settings: SettingsDep
+    payload: AppSettingsPatch,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> AppSettingsOut:
     if payload.memory_enabled is None:
         raise HTTPException(422, "必须提供 memory_enabled")
     return await patch_settings(
-        AppSettingsPatch(memory_enabled=payload.memory_enabled), session, settings
+        AppSettingsPatch(memory_enabled=payload.memory_enabled), session, settings, user
     )
 
 
@@ -578,9 +664,9 @@ async def upload_file(
     settings: SettingsDep,
     conversation_id: Annotated[UUID, Form()],
     upload: Annotated[UploadFile, File()],
+    user: CurrentUserDep,
 ) -> StoredFile:
-    if await session.get(Conversation, conversation_id) is None:
-        raise HTTPException(404, "会话不存在")
+    await _owned_conversation(session, conversation_id, user.id)
     data = await upload.read(settings.max_upload_bytes + 1)
     try:
         return await create_file(
@@ -598,7 +684,10 @@ async def upload_file(
 
 
 @router.get("/conversations/{conversation_id}/files", response_model=list[FileOut])
-async def list_files(conversation_id: UUID, session: SessionDep) -> list[StoredFile]:
+async def list_files(
+    conversation_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> list[StoredFile]:
+    await _owned_conversation(session, conversation_id, user.id)
     return list(
         (
             await session.scalars(
@@ -611,16 +700,31 @@ async def list_files(conversation_id: UUID, session: SessionDep) -> list[StoredF
 
 
 @router.get("/files/{file_id}", response_model=FileOut)
-async def get_file(file_id: UUID, session: SessionDep) -> StoredFile:
-    stored = await session.get(StoredFile, file_id)
+async def get_file(
+    file_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> StoredFile:
+    stored = await session.scalar(
+        select(StoredFile)
+        .join(Conversation)
+        .where(StoredFile.id == file_id, Conversation.user_id == user.id)
+    )
     if stored is None:
         raise HTTPException(404, "文件不存在")
     return stored
 
 
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_file(file_id: UUID, session: SessionDep, settings: SettingsDep) -> None:
-    stored = await session.get(StoredFile, file_id)
+async def delete_file(
+    file_id: UUID,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
+) -> None:
+    stored = await session.scalar(
+        select(StoredFile)
+        .join(Conversation)
+        .where(StoredFile.id == file_id, Conversation.user_id == user.id)
+    )
     if stored is None:
         raise HTTPException(404, "文件不存在")
     key = stored.storage_key
@@ -658,8 +762,26 @@ async def list_agents() -> list[AgentInfo]:
 
 @router.post("/agent-runs")
 async def start_agent_run(
-    payload: AgentRunRequest, session: SessionDep, settings: SettingsDep
+    payload: AgentRunRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> StreamingResponse:
+    await _owned_conversation(session, payload.conversation_id, user.id)
+    if payload.source_run_id:
+        await _owned_run(session, payload.source_run_id, user.id)
+    if payload.source_artifact_id:
+        artifact = await session.scalar(
+            select(Artifact)
+            .join(AgentRun, Artifact.run_id == AgentRun.id)
+            .join(Conversation, AgentRun.conversation_id == Conversation.id)
+            .where(
+                Artifact.id == payload.source_artifact_id,
+                Conversation.user_id == user.id,
+            )
+        )
+        if artifact is None:
+            raise HTTPException(404, "源产物不存在")
     try:
         run = await create_run(session, payload, settings)
     except LookupError as exc:
@@ -714,7 +836,10 @@ def _run_out(run: AgentRun) -> AgentRunOut:
 
 
 @router.get("/agent-runs/{run_id}", response_model=AgentRunOut)
-async def get_agent_run(run_id: UUID, session: SessionDep) -> AgentRunOut:
+async def get_agent_run(
+    run_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> AgentRunOut:
+    await _owned_run(session, run_id, user.id)
     run = await load_run(session, run_id)
     if run is None:
         raise HTTPException(404, "运行不存在")
@@ -722,10 +847,10 @@ async def get_agent_run(run_id: UUID, session: SessionDep) -> AgentRunOut:
 
 
 @router.get("/conversations/{conversation_id}/agent-runs", response_model=list[AgentRunOut])
-async def list_agent_runs(conversation_id: UUID, session: SessionDep) -> list[AgentRunOut]:
-    conversation = await session.get(Conversation, conversation_id)
-    if conversation is None:
-        raise HTTPException(404, "会话不存在")
+async def list_agent_runs(
+    conversation_id: UUID, session: SessionDep, user: CurrentUserDep
+) -> list[AgentRunOut]:
+    conversation = await _owned_conversation(session, conversation_id, user.id)
     if conversation.mode != "work":
         return []
     ids = (
@@ -745,10 +870,9 @@ async def command_agent_run(
     payload: AgentRunCommand,
     session: SessionDep,
     settings: SettingsDep,
+    user: CurrentUserDep,
 ):
-    run = await session.get(AgentRun, run_id)
-    if run is None:
-        raise HTTPException(404, "运行不存在")
+    run = await _owned_run(session, run_id, user.id)
     if payload.action == "cancel":
         await cancel_run(session, run_id)
         loaded = await load_run(session, run_id)
@@ -770,11 +894,12 @@ async def command_agent_run(
 
 @router.post("/agent-runs/{run_id}/resume")
 async def resume_agent_run(
-    run_id: UUID, session: SessionDep, settings: SettingsDep
+    run_id: UUID,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
 ) -> StreamingResponse:
-    run = await session.get(AgentRun, run_id)
-    if run is None:
-        raise HTTPException(404, "运行不存在")
+    run = await _owned_run(session, run_id, user.id)
     if run.agent_type != "slides":
         raise HTTPException(400, "只有演示 Agent 支持恢复")
     if run.status not in {"failed", "cancelled", "completed"}:
@@ -783,8 +908,18 @@ async def resume_agent_run(
 
 
 @router.get("/artifacts/{artifact_id}/download")
-async def download_artifact(artifact_id: UUID, session: SessionDep, settings: SettingsDep):
-    artifact = await session.get(Artifact, artifact_id)
+async def download_artifact(
+    artifact_id: UUID,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
+):
+    artifact = await session.scalar(
+        select(Artifact)
+        .join(AgentRun, Artifact.run_id == AgentRun.id)
+        .join(Conversation, AgentRun.conversation_id == Conversation.id)
+        .where(Artifact.id == artifact_id, Conversation.user_id == user.id)
+    )
     if artifact is None:
         raise HTTPException(404, "产物不存在")
     storage = get_storage(settings)
