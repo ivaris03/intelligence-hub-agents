@@ -141,7 +141,7 @@ button { cursor: pointer; }
 .research-report { max-height: 520px; overflow-y: auto; margin: 0 16px 16px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); font-size: 12px; }.run-answer, .run-error { margin: 0 16px 16px; }.run-error { color: var(--danger); }.run-retry { padding: 0 16px 16px; }.cancel-run { margin: 0 16px 16px; color: var(--danger); }
 
 .settings-layout { display: grid; grid-template-columns: 260px minmax(0,1fr); min-height: 100vh; background: var(--paper); }
-.settings-nav { padding: 35px 26px; background: #ebe8e0; display: flex; flex-direction: column; gap: 4px; }.settings-nav h2 { margin: 30px 10px 18px; }.settings-nav a { color: #69655d; text-decoration: none; padding: 10px; border-radius: 8px; }.settings-nav a.active { background: rgba(255,255,255,.6); color: var(--ink); }.back-link { font-size: 13px; }
+.settings-nav { padding: 35px 26px; background: #ebe8e0; display: flex; flex-direction: column; gap: 4px; }.settings-nav h2 { margin: 30px 10px 18px; }.settings-nav a { color: #69655d; text-decoration: none; padding: 10px; border-radius: 8px; }.settings-nav a.router-link-active:not(.back-link) { background: rgba(255,255,255,.6); color: var(--ink); }.back-link { font-size: 13px; }
 .settings-content { width: min(820px, calc(100% - 48px)); margin: 0 auto; padding: 76px 0; }.settings-content h1 { font-size: 38px; margin-bottom: 42px; }
 .settings-card { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 22px 0; border-top: 1px solid var(--line); }.settings-card h3 { margin: 0 0 6px; font-size: 15px; }.settings-card p { margin: 0; color: var(--muted); font-size: 13px; }.settings-card button, .settings-card select { border: 1px solid var(--line); background: white; border-radius: 8px; padding: 8px 11px; white-space: nowrap; }.status-badge { color: #8b671d; background: #f4ead0; padding: 6px 9px; border-radius: 99px; font-size: 11px; }
 .switch input { display: none; }.switch span { display: block; width: 38px; height: 22px; padding: 3px; border-radius: 20px; background: #bbb; }.switch span::after { content: ''; display: block; width: 16px; height: 16px; border-radius: 50%; background: white; transition: .2s; }.switch input:checked + span { background: var(--accent); }.switch input:checked + span::after { transform: translateX(16px); }
@@ -159,7 +159,8 @@ button { cursor: pointer; }
 :root[data-theme='dark'] .run-card, :root[data-theme='dark'] .tool-card { background: rgba(39,43,40,.8); }
 
 @media (max-width: 760px) {
-  .app-layout { grid-template-columns: 1fr; }.sidebar { display: none; }.suggestions { grid-template-columns: 1fr; width: min(100%, 360px); margin-top: 28px; }.topbar { padding: 0 14px; }.composer-shell { padding-inline: 12px; }.message-list { padding-inline: 16px; }.settings-layout { grid-template-columns: 1fr; }.settings-nav { display: none; }
+  .app-layout { grid-template-columns: 1fr; }.sidebar { display: none; }.suggestions { grid-template-columns: 1fr; width: min(100%, 360px); margin-top: 28px; }.topbar { padding: 0 14px; }.composer-shell { padding-inline: 12px; }.message-list { padding-inline: 16px; }.settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { position: sticky; z-index: 10; top: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); padding: 10px 14px; border-bottom: 1px solid var(--line); }.settings-nav h2 { display: none; }.settings-nav a { padding: 8px 4px; text-align: center; font-size: 12px; }.settings-nav .back-link { grid-column: 1 / -1; padding: 3px 4px 7px; text-align: left; font-size: 11px; }
 }
 
 @media (max-width: 920px) {
