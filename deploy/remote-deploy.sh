@@ -13,6 +13,32 @@ if [[ ! -r "$ENV_FILE" ]]; then
     exit 1
 fi
 
+env_value() {
+    local key="$1"
+    awk -F= -v key="$key" '
+        $1 == key {
+            sub(/^[^=]*=/, "")
+            sub(/\r$/, "")
+            print
+            exit
+        }
+    ' "$ENV_FILE"
+}
+
+database_password="$(env_value INTELLIGENCE_POSTGRES_PASSWORD)"
+auth_secret_key="$(env_value AUTH_SECRET_KEY)"
+
+if [[ -z "$database_password" ]]; then
+    echo "INTELLIGENCE_POSTGRES_PASSWORD is missing" >&2
+    exit 1
+fi
+
+if (( ${#auth_secret_key} < 32 )); then
+    echo "AUTH_SECRET_KEY is missing or shorter than 32 characters" >&2
+    exit 1
+fi
+unset auth_secret_key
+
 if ! docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1; then
     docker network create "$SHARED_NETWORK" >/dev/null 2>&1 || true
     docker network inspect "$SHARED_NETWORK" >/dev/null
@@ -34,20 +60,6 @@ if ! docker network inspect "$SHARED_NETWORK" \
     --format '{{range .Containers}}{{println .Name}}{{end}}' \
     | grep -Fxq "$(docker inspect --format '{{.Name}}' "$postgres_container" | sed 's#^/##')"; then
     docker network connect --alias ivaris-postgres "$SHARED_NETWORK" "$postgres_container"
-fi
-
-database_password="$(awk -F= '
-    $1 == "INTELLIGENCE_POSTGRES_PASSWORD" {
-        sub(/^[^=]*=/, "")
-        sub(/\r$/, "")
-        print
-        exit
-    }
-' "$ENV_FILE")"
-
-if [[ -z "$database_password" ]]; then
-    echo "INTELLIGENCE_POSTGRES_PASSWORD is missing" >&2
-    exit 1
 fi
 
 docker exec -i \
@@ -75,8 +87,15 @@ echo "Pulling Intelligence Hub images..."
 "${compose[@]}" pull
 
 echo "Starting Intelligence Hub..."
-"${compose[@]}" up -d --remove-orphans --wait
-"${compose[@]}" ps
+if "${compose[@]}" up -d --remove-orphans --wait; then
+    "${compose[@]}" ps
+else
+    status=$?
+    echo "Production services failed to become healthy" >&2
+    "${compose[@]}" ps --all || true
+    "${compose[@]}" logs --no-color --tail 100 migrate backend || true
+    exit "$status"
+fi
 
 echo "Removing dangling images..."
 docker image prune -f

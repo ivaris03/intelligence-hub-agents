@@ -151,15 +151,23 @@ jobs:
         shell: bash
         env:
           PRODUCTION_ENV_FILE: ${{ secrets.PRODUCTION_ENV_FILE }}
+          AUTH_SECRET_KEY: ${{ secrets.AUTH_SECRET_KEY }}
           BACKEND_IMAGE: ${{ needs.publish_images.outputs.backend_image }}
           FRONTEND_IMAGE: ${{ needs.publish_images.outputs.frontend_image }}
         run: |
           test -n "$PRODUCTION_ENV_FILE"
+          test -n "$AUTH_SECRET_KEY"
+          if (( ${#AUTH_SECRET_KEY} < 32 )); then
+            echo "AUTH_SECRET_KEY must contain at least 32 characters" >&2
+            exit 1
+          fi
           install -m 700 -d .deploy
           cp compose.production.yaml deploy/remote-deploy.sh deploy/nginx/intelligence.ivaris.top.conf .deploy/
           printf '%s\n' "$PRODUCTION_ENV_FILE" > .deploy/.env.production
-          printf '\nBACKEND_IMAGE=%s\nFRONTEND_IMAGE=%s\n' \
-            "$BACKEND_IMAGE" "$FRONTEND_IMAGE" >> .deploy/.env.production
+          sed -i '/^AUTH_SECRET_KEY=/d' .deploy/.env.production
+          printf '\nAUTH_SECRET_KEY=%s\nBACKEND_IMAGE=%s\nFRONTEND_IMAGE=%s\n' \
+            "$AUTH_SECRET_KEY" "$BACKEND_IMAGE" "$FRONTEND_IMAGE" \
+            >> .deploy/.env.production
           chmod 600 .deploy/.env.production
       - name: Configure SSH
         shell: bash

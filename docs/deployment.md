@@ -20,7 +20,8 @@
 | `DEPLOY_USER` | 有权运行 Docker 的 SSH 用户 |
 | `DEPLOY_SSH_KEY` | 对应用户的 SSH 私钥 |
 | `DEPLOY_KNOWN_HOSTS`（可选） | 经人工核验的服务器 `known_hosts` 记录；未配置时，runner 会根据部署主机和 SSH 端口自动获取 |
-| `PRODUCTION_ENV_FILE` | 完整生产变量文件，按 `deploy/.env.production.example` 填写 |
+| `AUTH_SECRET_KEY` | 至少 32 位的独立随机登录令牌签名密钥；工作流会在每次部署时注入 |
+| `PRODUCTION_ENV_FILE` | 除 `AUTH_SECRET_KEY` 外的完整生产变量文件，按 `deploy/.env.production.example` 填写 |
 
 建议为 `Production` 配置 required reviewers。
 
