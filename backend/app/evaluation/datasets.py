@@ -12,7 +12,7 @@ from docx import Document as WordDocument
 from langsmith import Client
 from pypdf import PdfWriter
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
 
 
@@ -1389,13 +1389,8 @@ def build_large_pdf_attachment(text: str, target_bytes: int) -> bytes:
 
     base = BytesIO()
     pdf = canvas.Canvas(base, pagesize=(612, 792), pageCompression=0)
-    font_name = "Helvetica"
-    font_path = "C:/Windows/Fonts/msyh.ttc"
-    try:
-        pdfmetrics.registerFont(TTFont("IHChinese", font_path, subfontIndex=0))
-        font_name = "IHChinese"
-    except Exception:
-        pass
+    font_name = "STSong-Light"
+    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
     pdf.setFont(font_name, 11)
     cursor_y = 740
     current = ""
