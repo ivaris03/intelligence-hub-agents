@@ -1,0 +1,55 @@
+name: intelligence-hub
+
+services:
+  migrate:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    restart: "no"
+    env_file: ${APP_ENV_FILE:-.env.production}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://intelligence_hub:${INTELLIGENCE_POSTGRES_PASSWORD:?INTELLIGENCE_POSTGRES_PASSWORD is required}@ivaris-postgres:5432/intelligence_hub_agents
+    command: ["alembic", "upgrade", "head"]
+    networks: [shared_database]
+
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    restart: unless-stopped
+    env_file: ${APP_ENV_FILE:-.env.production}
+    environment:
+      APP_ENV: production
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      WEB_ORIGIN: https://${SITE_DOMAIN:-intelligence.ivaris.top}
+      DATABASE_URL: postgresql+asyncpg://intelligence_hub:${INTELLIGENCE_POSTGRES_PASSWORD:?INTELLIGENCE_POSTGRES_PASSWORD is required}@ivaris-postgres:5432/intelligence_hub_agents
+      STORAGE_BACKEND: local
+      STORAGE_PATH: /app/storage
+    volumes:
+      - app-storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [internal, shared_database]
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE is required}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18100:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [internal]
+
+networks:
+  internal:
+  shared_database:
+    name: ivaris-shared
+    external: true
+
+volumes:
+  app-storage:
