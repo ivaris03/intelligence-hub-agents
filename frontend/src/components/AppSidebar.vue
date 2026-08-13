@@ -40,12 +40,17 @@ function confirmRemove(id: string) {
       <span class="brand-mark">IH</span>
       <span>Intelligence Hub</span>
     </div>
-    <button class="new-chat" type="button" :disabled="chat.isStreaming" @click="chat.createConversation">
+    <button class="new-chat" type="button" :disabled="chat.isStreaming" @click="chat.startConversation">
       <span>＋</span> 新会话
     </button>
     <label class="sidebar-search">
       <span>⌕</span>
-      <input v-model="search" type="search" placeholder="搜索标题或消息" aria-label="搜索会话" />
+      <input
+        v-model="search"
+        type="search"
+        placeholder="搜索会话、消息或任务"
+        aria-label="搜索会话"
+      />
     </label>
     <p class="sidebar-label">{{ search ? '搜索结果' : '最近' }}</p>
     <nav class="conversation-list" aria-label="会话列表">
@@ -70,7 +75,7 @@ function confirmRemove(id: string) {
         <button v-else class="conversation" type="button" @click="chat.selectConversation(conversation.id)">
           <span class="conversation-dot"></span>
           <span class="conversation-copy">
-            <b>{{ conversation.title }}</b>
+            <b><span class="conversation-mode">{{ conversation.mode === 'chat' ? 'Chat' : 'Work' }}</span>{{ conversation.title }}</b>
             <small v-if="conversation.match_snippet">{{ conversation.match_snippet }}</small>
           </span>
         </button>

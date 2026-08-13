@@ -92,7 +92,7 @@ flowchart TB
 
 | 业务对象 | 含义 | 主要关系 |
 | --- | --- | --- |
-| 会话 `Conversation` | 用户持续交互的业务容器 | 包含消息、文件和 Agent 运行 |
+| 会话 `Conversation` | 用户持续交互的业务容器，固定属于 Chat 或 Work | Chat 包含消息，Work 包含 Agent 运行；两者不复用会话 |
 | 消息 `Message` | 一次用户输入或助手回答 | 属于会话，可关联 Skill 快照 |
 | 文件 `File` | 用户提供的问答资料 | 属于会话，可产生检索片段 |
 | Skill | 可管理、可复用的任务指令 | 请求使用其不可变快照 |
@@ -115,6 +115,7 @@ flowchart TB
 ### 1.6 业务规则
 
 - Chat 不能启动 Agent；Work 必须指定图片、演示或研究 Agent。
+- Chat 与 Work 会话显示在同一个会话列表中；选择模式时只建立前端草稿状态，用户发送第一句话后才以该内容命名并持久化会话。会话模式之后不可切换，两者的上下文和文件空间独立，服务端拒绝跨模式写入。
 - 思考内容仅展示模型接口实际返回的 reasoning/thinking，不补写或伪造。
 - 工具调用只展示脱敏、截断后的参数和结果摘要。
 - 产物必须与运行和会话绑定；演示修改必须保留原版本并生成新版本。
@@ -358,7 +359,7 @@ Deep Agents：研究规划 -> 搜索与提取 -> 必要的固定子 Agent 委派
 
 | 表 | 关键字段 |
 | --- | --- |
-| `conversations` | `id`、`title`、`title_source`、`last_activity_at`、`memory_cursor`、`created_at`、`updated_at` |
+| `conversations` | `id`、`mode`、`title`、`title_source`、`last_activity_at`、`memory_cursor`、`created_at`、`updated_at` |
 | `messages` | `id`、`conversation_id`、`role`、`mode`、`skill_snapshot_id`、`content`、`status`、`created_at` |
 | `message_parts` | `id`、`message_id`、`seq`、`type`、`content`；按顺序保存 `reasoning`、`text` 等内容块 |
 | `tool_calls` | `id`、`message_id`、`run_id`、`tool_name`、`input_summary`、`output_summary`、`status`、`duration_ms` |

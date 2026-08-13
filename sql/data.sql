@@ -2,6 +2,7 @@ BEGIN;
 
 INSERT INTO conversations (
     id,
+    mode,
     title,
     title_source,
     created_at,
@@ -9,6 +10,7 @@ INSERT INTO conversations (
 )
 VALUES (
     '00000000-0000-4000-8000-000000000001',
+    'chat',
     '开始探索 Intelligence Hub',
     'manual',
     CURRENT_TIMESTAMP,
@@ -37,4 +39,3 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;
-

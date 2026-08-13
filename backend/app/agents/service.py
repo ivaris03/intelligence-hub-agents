@@ -72,6 +72,8 @@ async def create_run(
     conversation = await session.get(Conversation, payload.conversation_id)
     if conversation is None:
         raise LookupError("会话不存在")
+    if conversation.mode != "work":
+        raise ValueError("Work 任务只能写入 Work 会话")
     files = await load_files_for_request(
         session, payload.conversation_id, payload.file_ids, settings
     )
@@ -112,6 +114,9 @@ async def create_run(
 
     memories = await relevant_memories(session, payload.input, settings)
     conversation.last_activity_at = datetime.now(UTC)
+    if conversation.title_source == "default":
+        conversation.title = payload.input.strip().replace("\n", " ")[:40] or "新任务"
+        conversation.title_source = "generated"
     run = AgentRun(
         conversation_id=payload.conversation_id,
         agent_type=payload.agent_type,

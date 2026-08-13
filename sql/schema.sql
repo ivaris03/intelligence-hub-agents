@@ -7,6 +7,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE conversations (
     id UUID PRIMARY KEY,
+    mode VARCHAR(20) NOT NULL DEFAULT 'chat' CHECK (mode IN ('chat', 'work')),
     title VARCHAR(120) NOT NULL DEFAULT '新会话',
     title_source VARCHAR(20) NOT NULL DEFAULT 'default'
         CHECK (title_source IN ('default', 'generated', 'manual')),

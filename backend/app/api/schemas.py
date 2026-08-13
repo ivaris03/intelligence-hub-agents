@@ -36,6 +36,7 @@ class HealthResponse(BaseModel):
 
 class ConversationCreate(BaseModel):
     title: str = Field(default="新会话", min_length=1, max_length=120)
+    mode: Literal["chat", "work"] = "chat"
 
 
 class ConversationPatch(BaseModel):
@@ -46,6 +47,7 @@ class ConversationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    mode: Literal["chat", "work"]
     title: str
     title_source: str
     created_at: datetime

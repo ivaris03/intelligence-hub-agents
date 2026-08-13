@@ -33,6 +33,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[UUID] = uuid_pk_column()
+    mode: Mapped[str] = mapped_column(String(20), default="chat", index=True)
     title: Mapped[str] = mapped_column(String(120), default="新会话")
     title_source: Mapped[str] = mapped_column(String(20), default="default")
     last_activity_at: Mapped[datetime] = mapped_column(

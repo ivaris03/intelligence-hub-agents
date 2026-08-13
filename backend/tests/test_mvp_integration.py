@@ -56,8 +56,8 @@ def mvp_client():
         temporary.cleanup()
 
 
-def create_conversation(client: TestClient) -> str:
-    response = client.post("/api/conversations", json={})
+def create_conversation(client: TestClient, mode: str = "chat") -> str:
+    response = client.post("/api/conversations", json={"mode": mode})
     assert response.status_code == 201
     return response.json()["id"]
 
@@ -125,8 +125,36 @@ def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestCli
     assert search and search[0]["match_snippet"]
 
 
+def test_chat_and_work_use_separate_conversations(mvp_client: TestClient) -> None:
+    chat_id = create_conversation(mvp_client, "chat")
+    work_id = create_conversation(mvp_client, "work")
+
+    chat_conversations = mvp_client.get("/api/conversations", params={"mode": "chat"}).json()
+    work_conversations = mvp_client.get("/api/conversations", params={"mode": "work"}).json()
+    all_conversations = mvp_client.get("/api/conversations").json()
+    assert {item["id"] for item in chat_conversations} == {chat_id}
+    assert {item["id"] for item in work_conversations} == {work_id}
+    assert {item["id"] for item in all_conversations} == {chat_id, work_id}
+    assert all(item["mode"] == "chat" for item in chat_conversations)
+    assert all(item["mode"] == "work" for item in work_conversations)
+
+    chat_in_work = mvp_client.post(
+        f"/api/conversations/{work_id}/messages",
+        json={"content": "这条消息不能进入 Work", "mode": "chat"},
+    )
+    assert chat_in_work.status_code == 409
+    assert chat_in_work.json()["detail"] == "Chat 和 Work 不能共用同一个会话"
+
+    work_in_chat = mvp_client.post(
+        "/api/agent-runs",
+        json={"conversation_id": chat_id, "agent_type": "image", "input": "不能运行"},
+    )
+    assert work_in_chat.status_code == 400
+    assert work_in_chat.json()["detail"] == "Work 任务只能写入 Work 会话"
+
+
 def test_all_agent_artifacts_and_slide_confirmation(mvp_client: TestClient) -> None:
-    conversation_id = create_conversation(mvp_client)
+    conversation_id = create_conversation(mvp_client, "work")
     image_stream = mvp_client.post(
         "/api/agent-runs",
         json={
@@ -228,7 +256,7 @@ def test_all_agent_artifacts_and_slide_confirmation(mvp_client: TestClient) -> N
 
 
 def test_agent_failure_is_visible_and_retryable(mvp_client: TestClient, monkeypatch) -> None:
-    conversation_id = create_conversation(mvp_client)
+    conversation_id = create_conversation(mvp_client, "work")
     attempts = 0
 
     async def flaky_generate(self, prompt, reference_images=None):

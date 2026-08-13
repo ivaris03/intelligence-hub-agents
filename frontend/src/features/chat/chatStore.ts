@@ -28,6 +28,11 @@ function now() {
   return new Date().toISOString()
 }
 
+function sessionTitle(content: string) {
+  const normalized = content.replace(/\s+/g, ' ').trim()
+  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized
+}
+
 function emptyMessage(content = ''): Message {
   return {
     id: `pending-${crypto.randomUUID()}`,
@@ -79,6 +84,8 @@ export const useChatStore = defineStore('chat', () => {
   const activeMessageId = ref<string | null>(null)
   const activeRunId = ref<string | null>(null)
   const loading = ref(false)
+  const choosingMode = ref(false)
+  const pendingMode = ref<'chat' | 'work' | null>(null)
   const error = ref('')
   const uploadProgress = ref<Record<string, number>>({})
 
@@ -92,8 +99,12 @@ export const useChatStore = defineStore('chat', () => {
   )
   const timeline = computed<TimelineItem[]>(() => {
     const items: TimelineItem[] = [
-      ...messages.value.map((message) => ({ kind: 'message' as const, createdAt: message.created_at, message })),
-      ...runs.value.map((run) => ({ kind: 'run' as const, createdAt: run.created_at, run })),
+      ...(mode.value === 'chat'
+        ? messages.value.map((message) => ({ kind: 'message' as const, createdAt: message.created_at, message }))
+        : []),
+      ...(mode.value === 'work'
+        ? runs.value.map((run) => ({ kind: 'run' as const, createdAt: run.created_at, run }))
+        : []),
     ]
     return items.sort((left, right) => left.createdAt.localeCompare(right.createdAt))
   })
@@ -109,11 +120,8 @@ export const useChatStore = defineStore('chat', () => {
       const [items, skillItems] = await Promise.all([conversationsApi.list(), skillsApi.list()])
       conversations.value = items
       skills.value = skillItems
-      if (!items.length) {
-        const created = await conversationsApi.create()
-        conversations.value = [created]
-      }
-      await selectConversation(activeConversationId.value ?? conversations.value[0].id)
+      if (items.length) await selectConversation(items[0].id)
+      else choosingMode.value = true
     } catch (cause) {
       report(cause)
     } finally {
@@ -131,6 +139,11 @@ export const useChatStore = defineStore('chat', () => {
 
   async function selectConversation(id: string) {
     if (isStreaming.value) stop()
+    const conversation = conversations.value.find((item) => item.id === id)
+    if (!conversation) return
+    mode.value = conversation.mode
+    choosingMode.value = false
+    pendingMode.value = null
     activeConversationId.value = id
     selectedFileIds.value = []
     sourceArtifactId.value = ''
@@ -151,15 +164,24 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function createConversation() {
-    if (isStreaming.value) return
-    try {
-      const created = await conversationsApi.create()
-      conversations.value.unshift(created)
-      await selectConversation(created.id)
-    } catch (cause) {
-      report(cause)
-    }
+  function startConversation() {
+    if (isStreaming.value || loading.value) return
+    activeConversationId.value = null
+    messages.value = []
+    runs.value = []
+    files.value = []
+    selectedFileIds.value = []
+    sourceArtifactId.value = ''
+    error.value = ''
+    choosingMode.value = true
+    pendingMode.value = null
+  }
+
+  function chooseMode(conversationMode: 'chat' | 'work') {
+    if (isStreaming.value || loading.value) return
+    mode.value = conversationMode
+    pendingMode.value = conversationMode
+    choosingMode.value = false
   }
 
   async function renameConversation(id: string, title: string) {
@@ -178,7 +200,7 @@ export const useChatStore = defineStore('chat', () => {
       await conversationsApi.remove(id)
       conversations.value = conversations.value.filter((item) => item.id !== id)
       if (!conversations.value.length) {
-        await createConversation()
+        startConversation()
       } else if (activeConversationId.value === id) {
         await selectConversation(conversations.value[0].id)
       }
@@ -280,19 +302,33 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function send(content: string) {
-    const conversationId = activeConversationId.value
-    if (!conversationId || !content.trim() || isStreaming.value) return
+    const cleaned = content.trim()
+    if (!cleaned || isStreaming.value) return
+    let conversationId = activeConversationId.value
+    if (!conversationId) {
+      if (!pendingMode.value) return
+      try {
+        const created = await conversationsApi.create(pendingMode.value, sessionTitle(cleaned))
+        conversations.value.unshift(created)
+        activeConversationId.value = created.id
+        pendingMode.value = null
+        conversationId = created.id
+      } catch (cause) {
+        report(cause)
+        return
+      }
+    }
     error.value = ''
     if (mode.value === 'work') {
-      await sendWork(content.trim(), conversationId)
+      await sendWork(cleaned, conversationId)
       return
     }
     const user: Message = {
-      ...emptyMessage(content.trim()),
+      ...emptyMessage(cleaned),
       id: `local-${crypto.randomUUID()}`,
       conversation_id: conversationId,
       role: 'user',
-      content: content.trim(),
+      content: cleaned,
       status: 'completed',
       files: files.value.filter((file) => selectedFileIds.value.includes(file.id)),
     }
@@ -303,7 +339,7 @@ export const useChatStore = defineStore('chat', () => {
       await conversationsApi.streamMessage(
         conversationId,
         {
-          content: content.trim(),
+          content: cleaned,
           mode: 'chat',
           file_ids: selectedFileIds.value,
           ...(selectedSkillId.value ? { skill_id: selectedSkillId.value } : {}),
@@ -443,7 +479,10 @@ export const useChatStore = defineStore('chat', () => {
 
   async function addFiles(fileList: FileList | File[]) {
     const conversationId = activeConversationId.value
-    if (!conversationId) return
+    if (!conversationId) {
+      error.value = '请先发送第一句话创建会话，再上传文件'
+      return
+    }
     const pending = Array.from(fileList)
     if (pending.length + selectedFileIds.value.length > 3) {
       error.value = '单条消息最多选择 3 个文件'
@@ -493,12 +532,15 @@ export const useChatStore = defineStore('chat', () => {
     timeline,
     isStreaming,
     loading,
+    choosingMode,
+    pendingMode,
     error,
     uploadProgress,
     initialize,
     refreshConversations,
     selectConversation,
-    createConversation,
+    startConversation,
+    chooseMode,
     renameConversation,
     removeConversation,
     send,

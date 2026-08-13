@@ -97,6 +97,8 @@ async def prepare_message(
     conversation = await session.get(Conversation, conversation_id)
     if conversation is None:
         raise LookupError("会话不存在")
+    if conversation.mode != "chat" or payload.mode != "chat":
+        raise ValueError("Chat 消息只能写入 Chat 会话")
     files = await load_files_for_request(session, conversation_id, payload.file_ids, settings)
     selection = await select_skill(session, payload.content, payload.skill_id)
     snapshot = await snapshot_skill(session, selection.skill)
@@ -160,6 +162,7 @@ async def prepare_regeneration(
         select(Message)
         .where(
             Message.conversation_id == source.conversation_id,
+            Message.mode == "chat",
             Message.role == "user",
             Message.created_at <= source.created_at,
         )
@@ -171,6 +174,8 @@ async def prepare_regeneration(
     conversation = await session.get(Conversation, source.conversation_id)
     if conversation is None:
         raise LookupError("会话不存在")
+    if conversation.mode != "chat" or source.mode != "chat":
+        raise ValueError("只有 Chat 会话中的消息可以重新生成")
     files = [link.file for link in source.file_links]
     await load_files_for_request(
         session, source.conversation_id, [file.id for file in files], settings
@@ -228,6 +233,7 @@ async def _history(
 ) -> list[dict[str, str]]:
     query = select(Message).where(
         Message.conversation_id == prepared.conversation.id,
+        Message.mode == "chat",
         Message.id.not_in([prepared.assistant.id]),
         Message.status == "completed",
         Message.role.in_(["user", "assistant"]),
@@ -603,6 +609,7 @@ async def _finalize_metadata(
     completed_count = await session.scalar(
         select(func.count(Message.id)).where(
             Message.conversation_id == prepared.conversation.id,
+            Message.mode == "chat",
             Message.role == "assistant",
             Message.status == "completed",
             Message.id != assistant.id,

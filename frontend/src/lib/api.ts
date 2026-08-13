@@ -3,6 +3,7 @@ export type StreamEvent = { type: string; seq: number; [key: string]: unknown }
 
 export type Conversation = {
   id: string
+  mode: 'chat' | 'work'
   title: string
   title_source: string
   created_at: string
@@ -218,8 +219,15 @@ export function streamChat(
 }
 
 export const conversationsApi = {
-  list: (query = '') => api<Conversation[]>(`/api/conversations${query ? `?q=${encodeURIComponent(query)}` : ''}`),
-  create: () => api<Conversation>('/api/conversations', jsonInit('POST', {})),
+  list: (query = '', mode?: 'chat' | 'work') => {
+    const params = new URLSearchParams()
+    if (query) params.set('q', query)
+    if (mode) params.set('mode', mode)
+    const suffix = params.size ? `?${params.toString()}` : ''
+    return api<Conversation[]>(`/api/conversations${suffix}`)
+  },
+  create: (mode: 'chat' | 'work', title?: string) =>
+    api<Conversation>('/api/conversations', jsonInit('POST', { mode, ...(title ? { title } : {}) })),
   rename: (id: string, title: string) => api<Conversation>(`/api/conversations/${id}`, jsonInit('PATCH', { title })),
   remove: (id: string) => api<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
   messages: (id: string) => api<Message[]>(`/api/conversations/${id}/messages`),

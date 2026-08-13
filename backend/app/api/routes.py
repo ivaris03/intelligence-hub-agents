@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from io import BytesIO
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import (
@@ -151,6 +151,7 @@ def _conversation_out(
 ) -> ConversationOut:
     return ConversationOut(
         id=conversation.id,
+        mode=conversation.mode,
         title=conversation.title,
         title_source=conversation.title_source,
         created_at=conversation.created_at,
@@ -172,29 +173,53 @@ def _snippet(text: str, keyword: str, radius: int = 42) -> str:
 
 @router.get("/conversations", response_model=list[ConversationOut])
 async def list_conversations(
-    session: SessionDep, q: Annotated[str | None, Query(max_length=120)] = None
+    session: SessionDep,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+    mode: Annotated[Literal["chat", "work"] | None, Query()] = None,
 ) -> list[ConversationOut]:
     query = select(Conversation).order_by(Conversation.updated_at.desc())
+    if mode is not None:
+        query = query.where(Conversation.mode == mode)
     keyword = (q or "").strip()
     if keyword:
         pattern = f"%{keyword}%"
-        query = (
-            query.outerjoin(Message)
-            .where(or_(Conversation.title.ilike(pattern), Message.content.ilike(pattern)))
-            .distinct()
-        )
+        if mode == "chat":
+            query = query.outerjoin(Message).where(
+                or_(Conversation.title.ilike(pattern), Message.content.ilike(pattern))
+            )
+        elif mode == "work":
+            query = query.outerjoin(AgentRun).where(
+                or_(Conversation.title.ilike(pattern), AgentRun.input.ilike(pattern))
+            )
+        else:
+            query = (
+                query.outerjoin(Message)
+                .outerjoin(AgentRun)
+                .where(
+                    or_(
+                        Conversation.title.ilike(pattern),
+                        Message.content.ilike(pattern),
+                        AgentRun.input.ilike(pattern),
+                    )
+                )
+            )
+        query = query.distinct()
     conversations = (await session.scalars(query)).all()
     output: list[ConversationOut] = []
     for conversation in conversations:
         snippet = None
         if keyword:
+            content_column = (
+                Message.content if conversation.mode == "chat" else AgentRun.input
+            )
+            content_model = Message if conversation.mode == "chat" else AgentRun
             matched = await session.scalar(
-                select(Message.content)
+                select(content_column)
                 .where(
-                    Message.conversation_id == conversation.id,
-                    Message.content.ilike(f"%{keyword}%"),
+                    content_model.conversation_id == conversation.id,
+                    content_column.ilike(f"%{keyword}%"),
                 )
-                .order_by(Message.created_at.desc())
+                .order_by(content_model.created_at.desc())
                 .limit(1)
             )
             snippet = (
@@ -207,9 +232,12 @@ async def list_conversations(
 @router.post("/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
 async def create_conversation(payload: ConversationCreate, session: SessionDep) -> ConversationOut:
     title = payload.title.strip()
+    if payload.mode == "work" and title == "新会话":
+        title = "新任务"
     conversation = Conversation(
+        mode=payload.mode,
         title=title,
-        title_source="manual" if title != "新会话" else "default",
+        title_source="manual" if title not in {"新会话", "新任务"} else "default",
     )
     session.add(conversation)
     await session.commit()
@@ -262,7 +290,7 @@ async def _message_query(session: AsyncSession, conversation_id: UUID):
         (
             await session.scalars(
                 select(Message)
-                .where(Message.conversation_id == conversation_id)
+                .where(Message.conversation_id == conversation_id, Message.mode == "chat")
                 .options(
                     selectinload(Message.parts),
                     selectinload(Message.tool_calls),
@@ -326,8 +354,11 @@ def _message_out(message: Message) -> MessageOut:
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
 async def list_messages(conversation_id: UUID, session: SessionDep) -> list[MessageOut]:
-    if await session.get(Conversation, conversation_id) is None:
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
         raise HTTPException(404, "会话不存在")
+    if conversation.mode != "chat":
+        return []
     return [_message_out(message) for message in await _message_query(session, conversation_id)]
 
 
@@ -338,6 +369,11 @@ async def post_message(
     session: SessionDep,
     settings: SettingsDep,
 ) -> StreamingResponse:
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(404, "会话不存在")
+    if conversation.mode != payload.mode:
+        raise HTTPException(409, "Chat 和 Work 不能共用同一个会话")
     if payload.mode == "work":
         run_payload = AgentRunRequest(
             conversation_id=conversation_id,
@@ -389,7 +425,7 @@ async def regenerate_message(
         prepared = await prepare_regeneration(session, message_id, settings)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
-    except FileValidationError as exc:
+    except (ValueError, FileValidationError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return sse_response(stream_prepared_message(session, prepared, settings))
 
@@ -693,6 +729,11 @@ async def get_agent_run(run_id: UUID, session: SessionDep) -> AgentRunOut:
 
 @router.get("/conversations/{conversation_id}/agent-runs", response_model=list[AgentRunOut])
 async def list_agent_runs(conversation_id: UUID, session: SessionDep) -> list[AgentRunOut]:
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(404, "会话不存在")
+    if conversation.mode != "work":
+        return []
     ids = (
         await session.scalars(
             select(AgentRun.id)
