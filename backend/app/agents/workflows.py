@@ -64,12 +64,57 @@ class ResearchResult(BaseModel):
     unresolved_questions: list[str] = Field(default_factory=list)
 
 
+class ResearchSynthesis(BaseModel):
+    """Smaller provider schema; evidence URLs are attached server-side."""
+
+    title: str
+    sections: list[ResearchSection]
+    unresolved_questions: list[str] = Field(default_factory=list)
+
+
 class ResearchGraphState(TypedDict, total=False):
     question: str
     context: str
     plan: list[str]
     result: dict[str, Any]
     validation_errors: list[str]
+
+
+def _research_facets(question: str) -> list[str]:
+    scoped = question.split("要求", 1)[1] if "要求" in question else question
+    clauses = re.split(
+        r"[；;]|[，,](?=(?:并|同时|还要)?(?:比较|说明|分析|给出|覆盖|讨论|区分|解释|研究|处理))",
+        scoped,
+    )
+    facets: list[str] = []
+    for clause in clauses:
+        cleaned_clause = re.sub(r"^(?:并|同时|还要)", "", clause).strip(" ：:，,。；;")
+        match = re.match(
+            r"(?P<verb>比较|说明|分析|给出|覆盖|讨论|区分|解释|研究|处理)(?P<body>.+)",
+            cleaned_clause,
+        )
+        if not match:
+            facets.append(cleaned_clause)
+            continue
+        body = match.group("body")
+        if (
+            "、" not in body
+            or match.group("verb") in {"比较", "区分"}
+            or re.search(r"关系|区别|差异|语义|取舍", body)
+        ):
+            facets.append(cleaned_clause)
+            continue
+        verb = match.group("verb")
+        body = re.sub(r"和(?=[^和、]+$)", "、", body)
+        facets.extend(f"{verb}{part.strip()}" for part in body.split("、") if part.strip())
+    unique: list[str] = []
+    seen: set[str] = set()
+    for facet in facets:
+        key = facet.casefold()
+        if facet and key not in seen:
+            unique.append(facet[:100])
+            seen.add(key)
+    return unique[:6] or [question[:100]]
 
 
 def route_presentation_intent(
@@ -81,15 +126,25 @@ def route_presentation_intent(
 ) -> Literal["CREATE", "MODIFY", "RESUME"]:
     if requested in {"CREATE", "MODIFY", "RESUME"}:
         intent = requested
-    elif source_run_id or re.search(
+    elif source_run_id:
+        intent = "RESUME"
+    elif source_artifact_id:
+        intent = "MODIFY"
+    elif re.search(
+        r"^(?:请\s*)?(?:新建|创建|生成|制作|做(?:一个|一份)|create\b)",
+        text.strip(),
+        re.I,
+    ):
+        intent = "CREATE"
+    elif re.search(
         r"^(?:请\s*)?(?:(?:继续|恢复)(?:$|这|该|上|原|之前|运行|任务|演示|生成)|resume\b)"
         r"|从.+(?:继续|恢复)",
         text.strip(),
         re.I,
     ):
-        intent = "RESUME"
-    elif source_artifact_id or re.search(r"修改|调整|替换|改成|modify|edit", text, re.I):
-        intent = "MODIFY"
+        raise ValueError("RESUME 必须指定原运行")
+    elif re.search(r"修改|调整|替换|改成|modify|edit", text, re.I):
+        raise ValueError("MODIFY 必须指定源演示版本")
     else:
         intent = "CREATE"
     if intent == "MODIFY" and not source_artifact_id:
@@ -99,10 +154,67 @@ def route_presentation_intent(
     return intent
 
 
+def _explicit_presentation_requirements(topic: str) -> list[str]:
+    match = re.search(r"(?:突出|讲清|覆盖|包括)\s*([^。；;]+)", topic, re.I)
+    if not match:
+        return []
+    items = [
+        re.sub(r"^(?:并|以及)", "", item).strip(" ：:，,。")
+        for item in re.split(r"、|，|,|以及|及|和|与", match.group(1))
+    ]
+    return [item[:40] for item in items if item]
+
+
+def _requirement_slide_title(requirement: str) -> str:
+    specialized = {
+        "Recall@5": "Recall@5：定义、计算与召回覆盖",
+        "MRR": "MRR：首个相关结果的排序质量",
+        "Faithfulness": "Faithfulness：回答对证据的忠实度",
+        "实验流程": "实验流程：从数据集到回归对比",
+        "发布门槛": "发布门槛：指标阈值与人工复核",
+        "目标": "目标：本轮验证什么",
+        "结果": "结果：哪些假设已被验证",
+        "问题": "问题：当前差距与根因",
+        "改进": "改进：优先级与实施路径",
+        "下一步": "下一步：里程碑与责任人",
+    }
+    return specialized.get(requirement, f"{requirement}：核心发现与行动")[:80]
+
+
 def deterministic_outline(topic: str, max_pages: int = 8) -> PresentationOutline:
     cleaned = " ".join(topic.split())[:80] or "主题演示"
-    default = ["目标与范围", "验收结果", "关键证据", "实施路径", "风险与对策", "下一步"]
-    return PresentationOutline(title=cleaned, slides=default[: max(2, min(max_pages, 6))])
+    requirements = _explicit_presentation_requirements(topic)
+    while len(requirements) > max_pages:
+        requirements = [f"{requirements[0]}与{requirements[1]}", *requirements[2:]]
+    default = [
+        "目标与范围",
+        "现状与关键发现",
+        "关键证据",
+        "方案与取舍",
+        "实施路径",
+        "风险与对策",
+        "衡量指标",
+        "资源与协作",
+        "决策事项",
+        "下一步",
+        "附录与口径",
+        "待验证假设",
+        "阶段里程碑",
+        "责任分工",
+    ]
+    if requirements:
+        slides = [_requirement_slide_title(item) for item in requirements]
+    else:
+        slides = []
+    slide_limit = max(2, min(max_pages, len(default)))
+    seen = {item.casefold() for item in slides}
+    for fallback in default:
+        if len(slides) >= slide_limit:
+            break
+        if fallback.casefold() not in seen:
+            slides.append(fallback)
+            seen.add(fallback.casefold())
+    return PresentationOutline(title=cleaned, slides=slides[:slide_limit])
 
 
 _CHINESE_NUMBERS = {
@@ -134,6 +246,24 @@ _OUTLINE_PLACEHOLDERS = {
 }
 
 
+def _is_outline_placeholder(value: str) -> bool:
+    compact = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", value.casefold()).strip()
+    if compact in _OUTLINE_PLACEHOLDERS:
+        return True
+    tokens = set(compact.split())
+    return bool(tokens) and tokens <= {
+        "title",
+        "titles",
+        "slide",
+        "slides",
+        "cover",
+        "content",
+        "section",
+        "page",
+        "pages",
+    }
+
+
 def presentation_content_page_limit(text: str, configured_total_pages: int) -> int:
     """Return the content-page limit, reserving one page for the cover."""
 
@@ -159,16 +289,28 @@ def normalize_presentation_outline(
 
     fallback = deterministic_outline(topic, max_content_pages)
     title = re.sub(r"\s+", " ", outline.title).strip()[:80]
-    if title.casefold() in _OUTLINE_PLACEHOLDERS:
+    if _is_outline_placeholder(title):
         title = fallback.title
+
+    # Explicit requirements are a hard coverage contract. Model headlines may
+    # improve wording, but must not consume limited pages and drop a required topic.
+    if _explicit_presentation_requirements(topic):
+        return PresentationOutline(title=title or fallback.title, slides=fallback.slides)
 
     slides: list[str] = []
     seen: set[str] = set()
     for raw in outline.slides:
-        cleaned = re.sub(r"^\s*(?:[-*#]|\d+[.、])\s*", "", raw)
+        embedded_title = re.search(r'["\']title["\']\s*:\s*["\']([^"\']+)', raw, re.I)
+        candidate = embedded_title.group(1) if embedded_title else raw
+        cleaned = re.sub(r"^\s*(?:[-*#]|\d+[.、])\s*", "", candidate)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()[:80]
         key = cleaned.casefold()
-        if not cleaned or key in _OUTLINE_PLACEHOLDERS or key in seen:
+        if (
+            not cleaned
+            or not re.search(r"[a-z0-9\u4e00-\u9fff]", cleaned, re.I)
+            or _is_outline_placeholder(cleaned)
+            or key in seen
+        ):
             continue
         seen.add(key)
         slides.append(cleaned)
@@ -176,7 +318,7 @@ def normalize_presentation_outline(
             break
     for fallback_title in fallback.slides:
         key = fallback_title.casefold()
-        if len(slides) >= min(2, max_content_pages):
+        if len(slides) >= max_content_pages:
             break
         if key not in seen:
             seen.add(key)
@@ -263,6 +405,10 @@ class ResearchBudget:
         if monotonic() - self.started_at >= self.timeout_seconds:
             raise TimeoutError("研究任务超过总时间预算")
 
+    @property
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.timeout_seconds - (monotonic() - self.started_at))
+
 
 def validate_research_result(
     result: ResearchResult, *, allowed_urls: set[str] | None = None
@@ -288,11 +434,19 @@ def validate_research_result(
 class DeepResearchHarness:
     """Deep Agents subgraph with one budget shared by the coordinator and subagents."""
 
-    def __init__(self, settings: Settings, budget: ResearchBudget) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        budget: ResearchBudget,
+        *,
+        prompt_version: str = "optimized",
+    ) -> None:
         self.settings = settings
         self.budget = budget
+        self.prompt_version = prompt_version
         self.adapter = TavilyAdapter(settings)
         self._observed_results: dict[str, SearchResult] = {}
+        self.synthesis_mode = "qwen"
 
     @property
     def observed_urls(self) -> set[str]:
@@ -322,43 +476,91 @@ class DeepResearchHarness:
     async def run(self, question: str, context: str = "") -> ResearchResult:
         if not self.settings.model_ready or not self.settings.tavily_ready:
             return await self._direct_research(question)
+        optimized = self.prompt_version != "baseline"
+        if optimized:
+            facets = _research_facets(question)
+            topic = question.split("。", 1)[0]
+            group_count = min(len(facets), self.budget.max_searches)
+            groups: list[list[str]] = [[] for _ in range(group_count)]
+            for index, facet in enumerate(facets):
+                groups[index % len(groups)].append(facet)
+            await asyncio.gather(
+                *(
+                    self.budgeted_search(
+                        f"{topic}。重点研究：{'；'.join(group)}。优先官方文档和一手来源。"
+                    )
+                    for group in groups
+                )
+            )
+            return await self._synthesize_observed(question, context)
+
         seed_evidence = await self.budgeted_search(question)
+        coordinator_prompt = (
+            "你是研究协调 Agent。拆解问题、维护计划，并把资料搜集委派给 evidence-collector。"
+            "只可使用 budgeted_search；不得写业务数据库或登记产物。"
+            "最终严格按 ResearchResult 返回：sections 的字段必须是 heading、content、"
+            "evidence_ids；evidence 的字段必须是 id、title、url、snippet。"
+        )
+        collector_prompt = (
+            "围绕指定子问题调用 budgeted_search，返回简洁的标题、URL、摘要。"
+            "不要写文件、数据库或产物。"
+        )
+        final_instruction = "请在共享预算内补充必要证据，并给出有证据映射的结构化结果。"
+        if optimized:
+            coordinator_prompt += (
+                "先逐条提取用户的显式要求和主题，再用最少且互不重叠的章节完整覆盖。"
+                "报告章节应包含执行摘要、研究方法/来源范围、分主题发现、建议，以及局限/未决问题；"
+                "同一事实不要在多个章节重复。每个事实性章节都必须绑定支持它的 evidence_ids，"
+                "证据不足时明确说明，不得推断或编造。"
+            )
+            collector_prompt += (
+                "每次搜索只针对一个尚未覆盖的要求或主题，优先一手和官方来源；"
+                "不要重复已完成的搜索意图。"
+            )
+            final_instruction = (
+                "请建立‘要求/主题—搜索—证据—章节’映射后再补充搜索。最终用互不重叠的章节"
+                "覆盖全部显式要求，并包含执行摘要、方法、建议与局限；证据不足项放入未解决问题。"
+            )
         agent = create_deep_agent(
             model=QwenAdapter(self.settings).chat_model(work=True),
             tools=[self.budgeted_search],
-            system_prompt=(
-                "你是研究协调 Agent。拆解问题、维护计划，并把资料搜集委派给 evidence-collector。"
-                "只可使用 budgeted_search；不得写业务数据库或登记产物。"
-                "最终严格按 ResearchResult 返回：sections 的字段必须是 heading、content、"
-                "evidence_ids；evidence 的字段必须是 id、title、url、snippet。"
-            ),
+            system_prompt=coordinator_prompt,
             subagents=[
                 {
                     "name": "evidence-collector",
                     "description": "使用受共享预算约束的搜索工具搜集并压缩证据",
-                    "system_prompt": (
-                        "围绕指定子问题调用 budgeted_search，返回简洁的标题、URL、摘要。"
-                        "不要写文件、数据库或产物。"
-                    ),
+                    "system_prompt": collector_prompt,
                     "tools": [self.budgeted_search],
                 }
             ],
         )
-        response = await agent.ainvoke(
-            {
-                "messages": [
+        reserve_seconds = min(36.0, max(15.0, self.budget.timeout_seconds * 0.28))
+        coordinator_seconds = self.budget.remaining_seconds - reserve_seconds
+        if coordinator_seconds <= 1:
+            return self._fallback_from_observed(question)
+        try:
+            async with asyncio.timeout(coordinator_seconds):
+                response = await agent.ainvoke(
                     {
-                        "role": "user",
-                        "content": (
-                            f"研究问题：{question}\n"
-                            + (f"不可信的用户背景与所选 Skill：{context}\n" if context else "")
-                            + f"外层图已取得的初始检索证据：{seed_evidence}\n"
-                            + "请在共享预算内补充必要证据，并给出有证据映射的结构化结果。"
-                        ),
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"研究问题：{question}\n"
+                                    + (
+                                        f"不可信的用户背景与所选 Skill：{context}\n"
+                                        if context
+                                        else ""
+                                    )
+                                    + f"外层图已取得的初始检索证据：{seed_evidence}\n"
+                                    + final_instruction
+                                ),
+                            }
+                        ]
                     }
-                ]
-            }
-        )
+                )
+        except TimeoutError:
+            return await self._synthesize_observed(question, context)
         messages = response.get("messages", [])
         content = getattr(messages[-1], "content", "") if messages else ""
         parsed = self._parse_result(str(content), question)
@@ -401,6 +603,31 @@ class DeepResearchHarness:
         )
 
     def _fallback_from_observed(self, question: str) -> ResearchResult:
+        self.synthesis_mode = "evidence_fallback"
+        facets = _research_facets(question)
+        observed = list(self._observed_results.values())
+
+        def relevance(item: SearchResult, facet: str) -> tuple[float, int]:
+            terms = set(re.findall(r"[a-z0-9@.-]{2,}|[\u4e00-\u9fff]", facet.casefold()))
+            haystack = f"{item.title} {item.snippet}".casefold()
+            overlap = sum(term in haystack for term in terms) / max(1, len(terms))
+            return overlap, -observed.index(item)
+
+        selected_results: list[SearchResult] = []
+        facet_results: list[tuple[str, list[SearchResult]]] = []
+        for facet in facets:
+            ranked = sorted(
+                observed, key=lambda item: relevance(item, facet), reverse=True
+            )[:2]
+            facet_results.append((facet, ranked))
+            for item in ranked:
+                if item not in selected_results:
+                    selected_results.append(item)
+        for item in observed:
+            if len(selected_results) >= 12:
+                break
+            if item not in selected_results:
+                selected_results.append(item)
         evidence = [
             Evidence(
                 id=f"S{index}",
@@ -408,65 +635,180 @@ class DeepResearchHarness:
                 url=item.url,
                 snippet=item.snippet[:800],
             )
-            for index, item in enumerate(list(self._observed_results.values())[:8], 1)
+            for index, item in enumerate(selected_results[:12], 1)
         ]
+        if not evidence:
+            return ResearchResult(
+                title=question[:100],
+                sections=[ResearchSection(heading="执行摘要", content="搜索没有返回可用证据。")],
+                evidence=[],
+                unresolved_questions=["搜索没有返回可用证据。"],
+            )
+
+        evidence_by_url = {item.url: item for item in evidence}
+        sections = [
+            ResearchSection(
+                heading="执行摘要",
+                content=(
+                    f"本报告围绕 {len(facets)} 个显式研究方面，"
+                    f"在共享预算内整理了 {len(evidence)} 条可核验公开来源。"
+                    "以下结论严格来自搜索摘要；比较、建议与未决项均保留证据映射。"
+                ),
+            ),
+            ResearchSection(
+                heading="研究方法与来源范围",
+                content=(
+                    "方法采用问题拆分、公开网页检索、URL 白名单复验和章节—证据 ID 映射。"
+                    "只保留本次搜索实际返回的标题、摘要与 URL；未使用外部未检索事实。"
+                ),
+                evidence_ids=[item.id for item in evidence],
+            ),
+        ]
+        for index, (facet, raw_selected) in enumerate(facet_results, 1):
+            selected = [
+                evidence_by_url[item.url]
+                for item in raw_selected
+                if item.url in evidence_by_url
+            ]
+            prefix = ""
+            if re.search(r"比较|区分|差异|取舍", facet):
+                prefix = (
+                    "比较方法：分别核对各对象的定义、适用条件、成本/风险与边界，"
+                    "再对比证据中直接支持的差异。\n"
+                )
+            elif re.search(r"给出|建议|方案|步骤|检查|门槛|流程|配置", facet):
+                prefix = (
+                    "实施建议：1. 先按来源确认前提与适用边界；2. 在目标场景配置或执行；"
+                    "3. 用可观测指标验证，并记录来源未覆盖的不确定性。\n"
+                )
+            elif re.search(r"分析|说明|覆盖|讨论", facet):
+                prefix = "分析口径：先界定概念，再结合来源说明机制、风险与适用边界。\n"
+            sections.append(
+                ResearchSection(
+                    heading=f"主题 {index}：{facet[:50]}",
+                    content=(
+                        prefix
+                        + f"针对“{facet}”，可核验的证据发现如下：\n"
+                        + "\n".join(
+                            f"- 《{item.title}》：{item.snippet[:520]}" for item in selected
+                        )
+                    ),
+                    evidence_ids=[item.id for item in selected],
+                )
+            )
+        sections.append(
+            ResearchSection(
+                heading="综合建议与验证步骤",
+                content=(
+                    "1. 逐项把上述主题转成验收问题，并保留对应证据 ID；"
+                    "2. 对比较结论在目标环境做小规模验证，记录性能、成本、风险或可用性指标；"
+                    "3. 对搜索摘要未直接支持的参数和结论回到原文核验，再决定是否采用；"
+                    "4. 将验证失败项和证据缺口登记为下一轮研究输入。"
+                ),
+                evidence_ids=[item.id for item in evidence[:4]],
+            )
+        )
+        sections.append(
+            ResearchSection(
+                heading="局限与未解决问题",
+                content=(
+                    "本报告仅依据搜索结果摘要，未逐页阅读全文，也未进行付费数据库、"
+                    "实测基准或专家访谈复核；正式决策前应补做原文核验与场景化验证。"
+                ),
+            )
+        )
         return ResearchResult(
             title=question[:100],
-            sections=[
-                ResearchSection(
-                    heading="证据综述",
-                    content=(
-                        "\n".join(
-                            f"- {item.title}：{item.snippet[:400]}"
-                            for item in evidence
-                            if item.snippet
-                        )
-                        or "搜索没有返回可用于撰写结论的摘要。"
-                    ),
-                    evidence_ids=[item.id for item in evidence],
-                )
-            ],
+            sections=sections,
             evidence=evidence,
-            unresolved_questions=(
-                ["研究模型未返回可校验的结构化结果，报告按已检索证据安全降级。"]
-                if evidence
-                else ["搜索没有返回可用证据。"]
-            ),
+            unresolved_questions=["对关键结论补做原文核验、实测或专家复核。"],
         )
 
     async def _synthesize_observed(self, question: str, context: str) -> ResearchResult:
         if not self._observed_results:
             return self._fallback_from_observed(question)
+        facets = _research_facets(question)
+        observed = list(self._observed_results.values())
+
+        def relevance(item: SearchResult, facet: str) -> tuple[float, int]:
+            terms = set(re.findall(r"[a-z0-9@.-]{2,}|[\u4e00-\u9fff]", facet.casefold()))
+            haystack = f"{item.title} {item.snippet}".casefold()
+            overlap = sum(term in haystack for term in terms) / max(1, len(terms))
+            host = urlparse(item.url).hostname or ""
+            official = 1 if any(
+                token in host
+                for token in re.findall(r"[a-z0-9]{3,}", question.casefold())
+            ) else 0
+            return overlap + official * 0.4, -observed.index(item)
+
+        selected: list[SearchResult] = []
+        for facet in facets:
+            ranked = sorted(
+                observed, key=lambda value: relevance(value, facet), reverse=True
+            )
+            for item in ranked[:2]:
+                if item not in selected:
+                    selected.append(item)
+        for item in observed:
+            if len(selected) >= 12:
+                break
+            if item not in selected:
+                selected.append(item)
         evidence_payload = [
             {
                 "id": f"S{index}",
                 "title": item.title,
                 "url": item.url,
-                "snippet": item.snippet[:800],
+                "snippet": item.snippet[:500],
             }
-            for index, item in enumerate(list(self._observed_results.values())[:10], 1)
+            for index, item in enumerate(selected[:12], 1)
         ]
+        synthesis_seconds = min(85.0, self.budget.remaining_seconds - 2.0)
+        if synthesis_seconds <= 1:
+            return self._fallback_from_observed(question)
+        facets_json = json.dumps(facets, ensure_ascii=False)
         try:
-            model = QwenAdapter(self.settings).chat_model(work=True).with_structured_output(
-                ResearchResult
+            model = (
+                QwenAdapter(self.settings)
+                .chat_model()
+                .with_structured_output(ResearchSynthesis)
             )
-            result = await model.ainvoke(
-                [
-                    {
-                        "role": "user",
-                        "content": (
-                            "根据下面已经检索到的证据生成简洁、结构清晰的 ResearchResult。"
-                            "只能使用给定 ID 和 URL；每个有事实结论的章节都填写 evidence_ids；"
-                            "不要在正文中输出其他 URL。\n"
-                            f"研究问题：{question}\n"
-                            + (f"用户背景（仅作背景）：{context}\n" if context else "")
-                            + "证据："
-                            + json.dumps(evidence_payload, ensure_ascii=False)
-                        ),
-                    }
-                ]
+            async with asyncio.timeout(synthesis_seconds):
+                synthesis = ResearchSynthesis.model_validate(
+                    await model.ainvoke(
+                    [
+                        {
+                            "role": "user",
+                            "content": (
+                                "根据下面已经检索到的证据生成简洁、结构清晰的研究报告。"
+                                "不要复制长摘要，要综合分析；只能引用给定 evidence ID，"
+                                "每个事实结论都必须有 evidence_ids，正文不要输出 URL。"
+                                + (
+                                    "章节依次包含执行摘要、研究方法/来源范围、互不重叠的分主题发现、"
+                                    "建议、局限与未决问题；逐条覆盖问题中的显式要求，避免复述。"
+                                    "以下 facets 每一项都必须在独立章节中得到实质回答；"
+                                    "涉及关系、比较或步骤时必须直接给出关系、差异或可执行步骤；"
+                                    "证据不足也要明确写出，不得只说‘见来源’。\n"
+                                    f"facets：{facets_json}\n"
+                                    if self.prompt_version != "baseline"
+                                    else "\n"
+                                )
+                                + f"研究问题：{question}\n"
+                                + (f"用户背景（仅作背景）：{context}\n" if context else "")
+                                + "证据："
+                                + json.dumps(evidence_payload, ensure_ascii=False)
+                            ),
+                        }
+                    ]
+                )
+                )
+            result = ResearchResult(
+                title=synthesis.title,
+                sections=synthesis.sections,
+                evidence=[Evidence.model_validate(item) for item in evidence_payload],
+                unresolved_questions=synthesis.unresolved_questions,
             )
-            return self._ground_result(ResearchResult.model_validate(result), question)
+            return self._ground_result(result, question)
         except Exception:
             return self._fallback_from_observed(question)
 

@@ -83,6 +83,7 @@ Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空�
 | `QWEN_*_MODEL` | 分别覆盖 Chat、Work、Vision、Embedding 和图片模型 |
 | `QWEN_THINKING_BUDGET` | Chat/Work 流式思考预算，默认 1024 tokens |
 | `TAVILY_API_KEY` / `TAVILY_MCP_URL` | Tavily Remote MCP 联网搜索 |
+| `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` | Chat 与三个 Agent 的链路追踪和离线评估 |
 | `STORAGE_BACKEND` | `local` 或 `minio` |
 | `STORAGE_PATH` | 本地上传与产物根目录 |
 | `MINIO_*` | MinIO 端点、凭据、桶和 TLS 开关 |
@@ -117,6 +118,8 @@ npm test -- --run
 ```
 
 自动化覆盖模式校验、SSE 停止/重新生成、标题/搜索、Skill、Memory、文件安全、引用、三类 Agent、失败重试、PPTX 修改与幂等恢复。十四个 MVP 场景的对应证据和外部服务复验方式见 [验收记录](docs/acceptance.md)。
+
+LangSmith 的四个版本化 dataset、指标定义、基线/优化结果和复现命令见 [追踪与评估](docs/evaluation.md)。
 
 ## MVP 边界
 

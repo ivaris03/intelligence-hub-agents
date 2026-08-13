@@ -31,6 +31,8 @@ def mvp_client():
         storage_path=tmp_path / "storage",
         dashscope_api_key=None,
         tavily_api_key=None,
+        langsmith_tracing=False,
+        langsmith_api_key=None,
     )
 
     async def create_schema() -> None:

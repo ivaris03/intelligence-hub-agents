@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 import zipfile
@@ -10,7 +11,9 @@ from typing import Any
 from uuid import UUID
 
 from docx import Document
+from langchain_core.messages import HumanMessage
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +23,7 @@ from app.core.config import Settings
 from app.db.base import FileChunk, StoredFile
 from app.files.storage import get_storage, make_storage_key
 from app.integrations.qwen import QwenAdapter
+from app.observability.langsmith import finish_trace, trace_operation
 
 
 class FileValidationError(ValueError):
@@ -56,6 +60,10 @@ class ValidatedUpload:
     @property
     def text(self) -> str:
         return "\n\n".join(segment.content for segment in self.segments if segment.content)
+
+
+class DocumentSelection(BaseModel):
+    selected_indices: list[int]
 
 
 def _validate_declared_mime(extension: str, declared_mime: str) -> str:
@@ -170,6 +178,21 @@ def _split_segment(segment: ExtractedSegment, size: int, overlap: int) -> list[E
     return pieces
 
 
+def document_chunks_for_upload(
+    upload: ValidatedUpload, settings: Settings
+) -> list[ExtractedSegment]:
+    if upload.kind != "document":
+        return []
+    return [
+        piece
+        for segment in upload.segments
+        for piece in _split_segment(
+            segment, settings.document_chunk_chars, settings.document_chunk_overlap
+        )
+        if piece.content
+    ]
+
+
 async def create_file(
     session: AsyncSession,
     settings: Settings,
@@ -196,14 +219,7 @@ async def create_file(
     try:
         await storage.save(key, data, validated.mime_type)
         if validated.kind == "document":
-            chunks = [
-                piece
-                for segment in validated.segments
-                for piece in _split_segment(
-                    segment, settings.document_chunk_chars, settings.document_chunk_overlap
-                )
-                if piece.content
-            ]
+            chunks = document_chunks_for_upload(validated, settings)
             embeddings: list[list[float] | None]
             try:
                 embeddings = await QwenAdapter(settings).embed_documents(
@@ -272,7 +288,98 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return numerator / denominator if denominator else 0.0
 
 
+async def rerank_document_items(
+    query: str,
+    items: list[dict[str, Any]],
+    settings: Settings,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Rerank a bounded candidate set by direct answerability with a stable fallback."""
+
+    if len(items) <= limit or not settings.model_ready:
+        return items[:limit]
+    payload = [
+        {"index": index, "text": str(item.get("text") or "")[:2_000]}
+        for index, item in enumerate(items)
+    ]
+    try:
+        selector = QwenAdapter(settings).chat_model(work=True).with_structured_output(
+            DocumentSelection
+        )
+        selected = DocumentSelection.model_validate(
+            await selector.ainvoke(
+                [
+                    HumanMessage(
+                        content=(
+                            "按文本能否直接、完整回答精确问题来排序候选文档。"
+                            "不要因为共享‘支持、上传、格式’等泛化词就优先选择相邻主题；"
+                            f"只返回最相关的 {limit} 个零基 index，不重复。\n"
+                            f"问题：{query}\n候选：{json.dumps(payload, ensure_ascii=False)}"
+                        )
+                    )
+                ],
+                config={
+                    "run_name": "document.semantic_rerank",
+                    "tags": ["rag", "rerank"],
+                },
+            )
+        ).selected_indices
+    except Exception:
+        return items[:limit]
+    ordered: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for index in [*selected, *range(len(items))]:
+        if index in seen or not 0 <= index < len(items):
+            continue
+        seen.add(index)
+        ordered.append(items[index])
+        if len(ordered) == limit:
+            break
+    return ordered
+
+
 async def document_context(
+    session: AsyncSession,
+    files: list[StoredFile],
+    query: str,
+    settings: Settings,
+    limit: int = 6,
+) -> tuple[str, list[dict[str, Any]]]:
+    with trace_operation(
+        settings,
+        "document.retrieve",
+        inputs={
+            "query": query,
+            "limit": limit,
+            "files": [{"id": str(file.id), "name": file.name, "kind": file.kind} for file in files],
+        },
+        run_type="retriever",
+        tags=["rag", "retrieval"],
+        metadata={"embedding_model": settings.qwen_embedding_model, "top_k": limit},
+    ) as trace:
+        context, sources = await _document_context(session, files, query, settings, limit)
+        documents: list[dict[str, Any]] = []
+        for source in sources:
+            file = next((item for item in files if str(item.id) == source["file_id"]), None)
+            if file is None:
+                continue
+            chunk = next(
+                (item for item in file.chunks if item.locator == source["locator"]),
+                None,
+            )
+            page_content = chunk.content if chunk else file.text_content or ""
+            documents.append(
+                {
+                    "page_content": page_content[:8_000],
+                    "metadata": source,
+                }
+            )
+        finish_trace(trace, {"documents": documents})
+        return context, sources
+
+
+async def _document_context(
     session: AsyncSession,
     files: list[StoredFile],
     query: str,
@@ -319,7 +426,7 @@ async def document_context(
         if query_embedding is not None and dialect == "postgresql":
             # Keep vector similarity inside PostgreSQL for real deployments. The
             # lexical fallback below keeps the no-key SQLite demo deterministic.
-            ranked = list(
+            vector_candidates = list(
                 (
                     await session.scalars(
                         select(FileChunk)
@@ -328,20 +435,23 @@ async def document_context(
                             FileChunk.embedding.is_not(None),
                         )
                         .order_by(FileChunk.embedding.cosine_distance(query_embedding))
-                        .limit(limit)
+                        .limit(max(limit * 4, limit))
                     )
                 ).all()
             )
-            if len(ranked) < limit:
-                selected_ids = {chunk.id for chunk in ranked}
-                lexical = sorted(
-                    (chunk for chunk in long_chunks if chunk.id not in selected_ids),
-                    key=score,
-                    reverse=True,
-                )
-                ranked.extend(lexical[: limit - len(ranked)])
+            lexical_candidates = sorted(long_chunks, key=score, reverse=True)[: limit * 4]
+            candidates = {chunk.id: chunk for chunk in vector_candidates}
+            candidates.update({chunk.id: chunk for chunk in lexical_candidates})
+            ranked = sorted(candidates.values(), key=score, reverse=True)[: limit * 4]
         else:
-            ranked = sorted(long_chunks, key=score, reverse=True)[:limit]
+            ranked = sorted(long_chunks, key=score, reverse=True)[: limit * 4]
+        reranked = await rerank_document_items(
+            query,
+            [{"text": chunk.content, "chunk": chunk} for chunk in ranked],
+            settings,
+            limit=limit,
+        )
+        ranked = [item["chunk"] for item in reranked]
         file_by_id = {file.id: file for file in documents}
         for chunk in ranked:
             file = file_by_id[chunk.file_id]

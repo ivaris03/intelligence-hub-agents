@@ -1,7 +1,14 @@
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings, get_settings
 from app.main import app
 
+app.dependency_overrides[get_settings] = lambda: Settings(
+    dashscope_api_key=None,
+    tavily_api_key=None,
+    langsmith_tracing=False,
+    langsmith_api_key=None,
+)
 client = TestClient(app)
 
 
@@ -25,4 +32,3 @@ def test_chat_rejects_agent() -> None:
         json={"content": "画一张图", "mode": "chat", "agent_type": "image"},
     )
     assert response.status_code == 422
-

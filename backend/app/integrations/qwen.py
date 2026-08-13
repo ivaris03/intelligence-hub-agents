@@ -11,6 +11,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from PIL import Image, ImageDraw
 
 from app.core.config import Settings
+from app.observability.langsmith import finish_trace, trace_operation
 
 
 class QwenAdapter:
@@ -45,6 +46,69 @@ class QwenAdapter:
             yield item
 
     async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_context: str = "",
+        images: list[dict[str, str]] | None = None,
+        work: bool = False,
+    ) -> AsyncIterator[tuple[str, str]]:
+        images = images or []
+        model = (
+            self.settings.qwen_vision_model
+            if images
+            else self.settings.qwen_agent_model
+            if work
+            else self.settings.qwen_chat_model
+        )
+        with trace_operation(
+            self.settings,
+            "qwen.chat.completions.stream",
+            inputs={
+                "messages": [
+                    *(
+                        [{"role": "system", "content": system_context[:30_000]}]
+                        if system_context
+                        else []
+                    ),
+                    *messages,
+                ],
+                "images": [
+                    {"file_id": item.get("file_id"), "name": item.get("name")} for item in images
+                ],
+            },
+            run_type="llm",
+            tags=["qwen", "streaming"],
+            metadata={
+                "ls_provider": "alibaba_dashscope",
+                "ls_model_name": model,
+                "ls_model_type": "chat",
+                "work": work,
+                "vision": bool(images),
+            },
+        ) as trace:
+            answer = ""
+            reasoning = ""
+            async for kind, delta in self._stream_chat(
+                messages,
+                system_context=system_context,
+                images=images,
+                work=work,
+            ):
+                if kind == "reasoning":
+                    reasoning += delta
+                else:
+                    answer += delta
+                yield kind, delta
+            finish_trace(
+                trace,
+                {
+                    "choices": [{"message": {"role": "assistant", "content": answer}}],
+                    "reasoning": reasoning,
+                },
+            )
+
+    async def _stream_chat(
         self,
         messages: list[dict[str, str]],
         *,
@@ -185,6 +249,22 @@ class QwenAdapter:
 
     async def generate_image(self, prompt: str, reference_images: list[str] | None = None) -> bytes:
         references = reference_images or []
+        with trace_operation(
+            self.settings,
+            "qwen.image.generate",
+            inputs={"prompt": prompt, "reference_count": len(references)},
+            run_type="tool",
+            tags=["qwen", "image-generation"],
+            metadata={
+                "ls_provider": "alibaba_dashscope",
+                "ls_model_name": self.settings.qwen_image_model,
+            },
+        ) as trace:
+            data = await self._generate_image(prompt, references)
+            finish_trace(trace, {"format": "png", "size_bytes": len(data)})
+            return data
+
+    async def _generate_image(self, prompt: str, references: list[str]) -> bytes:
         if not self.settings.model_ready:
             return self._demo_image()
         content: list[dict[str, str]] = [{"image": image} for image in references[:3]]

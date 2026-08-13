@@ -17,6 +17,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 from sqlalchemy import func, select
@@ -58,6 +59,7 @@ from app.files.service import image_inputs, load_files_for_request
 from app.files.storage import get_storage
 from app.integrations.qwen import QwenAdapter
 from app.memory.service import relevant_memories
+from app.observability.langsmith import finish_trace, trace_operation
 from app.skills.service import select_skill, snapshot_skill
 
 _cancellations: dict[UUID, asyncio.Event] = {}
@@ -194,6 +196,52 @@ async def stream_run(
     *,
     action: str | None = None,
 ):
+    with trace_operation(
+        settings,
+        f"intelligence_hub.agent.{run.agent_type}",
+        inputs={
+            "input": run.input,
+            "agent_type": run.agent_type,
+            "intent": run.intent,
+            "action": action,
+            "conversation_id": str(run.conversation_id),
+            "run_id": str(run.id),
+        },
+        tags=["agent", f"agent:{run.agent_type}", f"intent:{run.intent.lower()}"],
+        metadata={
+            "conversation_id": str(run.conversation_id),
+            "agent_run_id": str(run.id),
+            "agent_type": run.agent_type,
+            "intent": run.intent,
+            "action": action or "start",
+            "model": settings.qwen_agent_model,
+        },
+    ) as trace:
+        artifact_payloads: list[dict[str, Any]] = []
+        async for event_type, payload in _stream_run(session, run, settings, action=action):
+            if event_type == "artifact.created" and payload.get("artifact"):
+                artifact_payloads.append(payload["artifact"])
+            yield event_type, payload
+        finish_trace(
+            trace,
+            {
+                "answer": run.answer,
+                "status": run.status,
+                "stage": run.stage,
+                "public_state": run.public_state,
+                "artifacts": artifact_payloads,
+                "error": run.error,
+            },
+        )
+
+
+async def _stream_run(
+    session: AsyncSession,
+    run: AgentRun,
+    settings: Settings,
+    *,
+    action: str | None = None,
+):
     existing_seq = await session.scalar(
         select(func.max(RunEvent.seq)).where(RunEvent.run_id == run.id)
     )
@@ -253,9 +301,7 @@ async def stream_run(
     except asyncio.CancelledError:
         running_tools = (
             await session.scalars(
-                select(ToolCall).where(
-                    ToolCall.run_id == run.id, ToolCall.status == "running"
-                )
+                select(ToolCall).where(ToolCall.run_id == run.id, ToolCall.status == "running")
             )
         ).all()
         for tool in running_tools:
@@ -278,9 +324,7 @@ async def stream_run(
     except Exception:
         running_tools = (
             await session.scalars(
-                select(ToolCall).where(
-                    ToolCall.run_id == run.id, ToolCall.status == "running"
-                )
+                select(ToolCall).where(ToolCall.run_id == run.id, ToolCall.status == "running")
             )
         ).all()
         for tool in running_tools:
@@ -418,15 +462,22 @@ async def _graph_outline(run: AgentRun, settings: Settings) -> PresentationOutli
     outline = deterministic_outline(run.input, max_content_pages)
     if settings.model_ready:
         try:
-            model = QwenAdapter(settings).chat_model(work=True).with_structured_output(
-                PresentationOutline
+            model = (
+                QwenAdapter(settings)
+                .chat_model(work=True)
+                .with_structured_output(PresentationOutline)
             )
             generated = await model.ainvoke(
                 [
                     HumanMessage(
                         content=(
                             "为下面的演示任务生成结构化大纲。页面标题应互不重复，"
-                            "不得返回 title、slide 或“标题”等占位文本。"
+                            "不得返回 title、slide、cover_slide、slide_titles 或“标题”等占位文本。"
+                            "slides 数组中的每个元素只能是纯文本页面标题，"
+                            "不得把 JSON 对象序列化成字符串。"
+                            "先建立背景和决策问题，再给证据或分析，最后给明确行动；"
+                            "每一页只承担一个角色，标题要表达结论而不是宽泛主题词。"
+                            "不得编造用户未提供的金额、比例、日期、样本量或业务结果。"
                             f"成稿含封面不超过 {max_content_pages + 1} 页，"
                             f"内容页不超过 {max_content_pages} 页：\n{run.input}"
                         )
@@ -454,9 +505,7 @@ async def _graph_outline(run: AgentRun, settings: Settings) -> PresentationOutli
             with PostgresSaver.from_conn_string(settings.langgraph_database_url) as saver:
                 saver.setup()
                 return build_presentation_graph(saver).invoke(initial_state, config)
-        return build_presentation_graph(_memory_graph_checkpointer).invoke(
-            initial_state, config
-        )
+        return build_presentation_graph(_memory_graph_checkpointer).invoke(initial_state, config)
 
     try:
         result = await asyncio.to_thread(invoke)
@@ -668,24 +717,24 @@ async def _enhance_slide_content(
                 [
                     HumanMessage(
                         content=(
+                            "你是资深演示编辑。内容要可直接上屏，使用简短、具体、互不重复的要点；"
+                            "优先呈现‘结论—依据—行动’关系。"
                             f"为演示任务“{run.input}”生成这一页的结构化内容。{context}"
-                            f"页标题必须保持为“{slide.title}”。要点不超过 5 条。"
-                            "不得编造覆盖率、金额、日期等未提供的数据；缺失信息写“待补充”。"
+                            f"页标题必须保持为“{slide.title}”。"
+                            "要点控制在 3–4 条，每条不超过 90 字。"
+                            "不得编造覆盖率、金额、日期等未提供的数据；"
+                            "缺失信息应改写为验证方法、决策问题或衡量计划，不要堆砌‘待补充’占位符。"
                             "要点使用纯文本，不要包含 Markdown 标记。"
                         )
                     )
                 ]
             )
             generated = SlideContent.model_validate(result)
-            bullets = [
-                _clean_slide_text(item)
-                for item in generated.bullets
-                if _clean_slide_text(item)
-            ][:5]
+            bullets = _normalize_slide_bullets(slide.title, generated.bullets, slide.bullets)
             enhanced.append(
                 SlideContent(
                     title=slide.title,
-                    bullets=bullets or slide.bullets,
+                    bullets=bullets,
                     speaker_notes=_clean_slide_text(generated.speaker_notes),
                 )
             )
@@ -700,33 +749,229 @@ def _clean_slide_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+_GENERIC_SLIDE_BULLETS = {
+    "关键事实与建议",
+    "可执行的下一步",
+}
+_INCOMPLETE_SLIDE_ENDING = re.compile(
+    r"(?:[，,：:]|\b(?:and|or|with|to|by|for)|(?:与|和|及|为|在|以|按|将|由|覆盖|衡量|对比|说明))$",
+    re.I,
+)
+
+
+def _compact_slide_bullet(value: str, limit: int = 100) -> str:
+    """Keep card copy complete and short enough to render without clipping."""
+
+    if len(value) <= limit:
+        return value
+    clauses = [item.strip() for item in re.split(r"(?<=[。！？；])", value) if item.strip()]
+    selected = clauses[:1]
+    action = next(
+        (item for item in clauses[1:] if re.search(r"(?:行动|下一步|建议|验证)", item)),
+        None,
+    )
+    if action:
+        selected.append(action)
+    compact = "".join(selected)
+    if len(compact) <= limit:
+        return compact
+    boundary = max(compact.rfind(mark, 55, limit - 1) for mark in "，；。！？")
+    if boundary >= 55:
+        return compact[: boundary + 1].rstrip("，；") + "。"
+    return compact[: limit - 1].rstrip("，,；;：: ") + "。"
+
+
+def _fallback_slide_bullets(title: str) -> list[str]:
+    subject = title.split("：", 1)[0].strip() or "本页主题"
+    return [
+        f"核心结论：明确“{subject}”的判断、适用边界与决策影响。",
+        f"验证依据：用现有证据核验“{subject}”，并显式记录信息缺口。",
+        f"下一步：把“{subject}”落实为负责人、时间点与验收条件。",
+    ]
+
+
+def _normalize_slide_bullets(
+    title: str,
+    bullets: list[str],
+    fallback: list[str] | None = None,
+) -> list[str]:
+    """Remove partial/provider-placeholder copy and guarantee a balanced page."""
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    candidates = [*bullets, *(fallback or [])]
+    for raw in candidates:
+        cleaned = _clean_slide_text(raw)
+        if (
+            not cleaned
+            or cleaned in _GENERIC_SLIDE_BULLETS
+            or cleaned.startswith("围绕“")
+            or _INCOMPLETE_SLIDE_ENDING.search(cleaned)
+        ):
+            continue
+        compact = _compact_slide_bullet(cleaned)
+        key = compact.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(compact)
+        if len(normalized) == 4:
+            break
+    for replacement in _fallback_slide_bullets(title):
+        if len(normalized) >= 3:
+            break
+        normalized.append(replacement)
+    return normalized[:4]
+
+
+def _slide_layout_kind(title: str, slide_index: int) -> int:
+    """Choose a layout that matches the page's rhetorical role."""
+
+    if re.search(r"流程|路径|步骤|时间线|里程碑|季度|计划|roadmap|timeline|process", title, re.I):
+        return 2
+    if re.search(r"对比|指标|风险|问题|能力|安全|约束|资源|compare|metric|risk", title, re.I):
+        return 1
+    if re.search(r"结论|目标|结果|判断|推荐|summary|decision", title, re.I):
+        return 0
+    return (slide_index - 1) % 2
+
+
 def _render_presentation(
     outline: PresentationOutline, slides: list[SlideContent]
 ) -> tuple[bytes, list[str]]:
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
     presentation.slide_height = Inches(7.5)
-    title_slide = presentation.slides.add_slide(presentation.slide_layouts[0])
+    cream = RGBColor(248, 246, 240)
+    ink = RGBColor(30, 43, 48)
+    green = RGBColor(35, 104, 88)
+    mint = RGBColor(198, 226, 214)
+    amber = RGBColor(224, 174, 85)
+
+    title_slide = presentation.slides.add_slide(presentation.slide_layouts[5])
     title_slide.background.fill.solid()
-    title_slide.background.fill.fore_color.rgb = RGBColor(247, 245, 239)
-    title_slide.shapes.title.text = outline.title
-    title_slide.placeholders[1].text = "Intelligence Hub · AI 生成草稿"
+    title_slide.background.fill.fore_color.rgb = ink
+    accent = title_slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(0.28), presentation.slide_height
+    )
+    accent.fill.solid()
+    accent.fill.fore_color.rgb = amber
+    accent.line.fill.background()
+    eyebrow = title_slide.shapes.add_textbox(Inches(0.9), Inches(0.75), Inches(5.8), Inches(0.5))
+    eyebrow.text_frame.text = "INTELLIGENCE HUB  /  WORKING DECK"
+    eyebrow.text_frame.paragraphs[0].font.size = Pt(12)
+    eyebrow.text_frame.paragraphs[0].font.bold = True
+    eyebrow.text_frame.paragraphs[0].font.color.rgb = mint
+    title_box = title_slide.shapes.title
+    title_box.left = Inches(0.9)
+    title_box.top = Inches(1.55)
+    title_box.width = Inches(10.8)
+    title_box.height = Inches(2.4)
+    title_box.text_frame.word_wrap = True
+    title_box.text_frame.text = outline.title
+    title_box.text_frame.paragraphs[0].font.size = Pt(36)
+    title_box.text_frame.paragraphs[0].font.bold = True
+    title_box.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
+    subtitle = title_slide.shapes.add_textbox(Inches(0.95), Inches(5.9), Inches(6.5), Inches(0.45))
+    subtitle.text_frame.text = "AI 生成草稿  ·  请核对事实与数据"
+    subtitle.text_frame.paragraphs[0].font.size = Pt(13)
+    subtitle.text_frame.paragraphs[0].font.color.rgb = RGBColor(190, 201, 201)
     titles = [outline.title]
-    for item in slides:
-        slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    for slide_index, item in enumerate(slides, 1):
+        slide = presentation.slides.add_slide(presentation.slide_layouts[5])
         slide.background.fill.solid()
-        slide.background.fill.fore_color.rgb = RGBColor(251, 250, 247)
-        slide.shapes.title.text = item.title
-        title_frame = slide.shapes.title.text_frame
-        title_frame.paragraphs[0].font.color.rgb = RGBColor(39, 95, 84)
-        title_frame.paragraphs[0].font.size = Pt(28)
-        body = slide.placeholders[1].text_frame
-        body.clear()
-        for index, bullet in enumerate(item.bullets[:6]):
-            paragraph = body.paragraphs[0] if index == 0 else body.add_paragraph()
-            paragraph.text = bullet
-            paragraph.font.size = Pt(20)
-            paragraph.space_after = Pt(12)
+        slide.background.fill.fore_color.rgb = cream
+        number_box = slide.shapes.add_textbox(Inches(0.75), Inches(0.5), Inches(0.75), Inches(0.4))
+        number_box.text_frame.text = f"{slide_index:02d}"
+        number_box.text_frame.paragraphs[0].font.size = Pt(12)
+        number_box.text_frame.paragraphs[0].font.bold = True
+        number_box.text_frame.paragraphs[0].font.color.rgb = amber
+        title_box = slide.shapes.title
+        title_box.left = Inches(1.55)
+        title_box.top = Inches(0.48)
+        title_box.width = Inches(10.8)
+        title_box.height = Inches(0.85)
+        title_box.text_frame.word_wrap = True
+        title_box.text_frame.text = item.title
+        title_frame = title_box.text_frame
+        title_frame.paragraphs[0].font.color.rgb = ink
+        title_frame.paragraphs[0].font.bold = True
+        title_frame.paragraphs[0].font.size = Pt(26)
+        divider = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.75), Inches(1.45), Inches(11.85), Inches(0.04)
+        )
+        divider.fill.solid()
+        divider.fill.fore_color.rgb = mint
+        divider.line.fill.background()
+        bullets = _normalize_slide_bullets(item.title, item.bullets)
+        layout_kind = _slide_layout_kind(item.title, slide_index)
+        for index, bullet in enumerate(bullets):
+            if layout_kind == 0 and index == 0:
+                # Hero insight followed by up to three equal supporting cards.
+                x, y, width, height = 0.9, 1.78, 11.55, 1.2
+                fill_color = mint
+                font_size = 18
+                emphasized = True
+            elif layout_kind == 0:
+                supporting_count = max(1, len(bullets) - 1)
+                grid_index = index - 1
+                gap = 0.22
+                width = (11.55 - gap * (supporting_count - 1)) / supporting_count
+                x = 0.9 + grid_index * (width + gap)
+                y, height = 3.28, 2.25
+                fill_color = RGBColor(255, 255, 255)
+                font_size = 15
+                emphasized = False
+            elif layout_kind == 1:
+                # Stable 2x2 comparison grid.
+                column = index % 2
+                row = index // 2
+                x = 0.9 + column * 5.85
+                y = 1.78 + row * 2.25
+                width, height = 5.55, 1.92
+                fill_color = RGBColor(255, 255, 255) if index else mint
+                font_size = 16
+                emphasized = index == 0
+            else:
+                # Full-width flow for timelines, procedures, and ordered decisions.
+                x, y, width, height = 1.25, 1.72 + index * 1.15, 10.85, 0.92
+                fill_color = mint if index == 0 else RGBColor(255, 255, 255)
+                font_size = 16
+                emphasized = index == 0
+            card = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                Inches(x),
+                Inches(y),
+                Inches(width),
+                Inches(height),
+            )
+            card.fill.solid()
+            card.fill.fore_color.rgb = fill_color
+            card.line.color.rgb = mint
+            frame = card.text_frame
+            frame.clear()
+            frame.word_wrap = True
+            frame.margin_left = Inches(0.24)
+            frame.margin_right = Inches(0.2)
+            frame.margin_top = Inches(0.15)
+            frame.margin_bottom = Inches(0.12)
+            paragraph = frame.paragraphs[0]
+            paragraph.text = f"{index + 1:02d}  {bullet}"
+            paragraph.font.size = Pt(font_size)
+            paragraph.font.bold = emphasized
+            paragraph.font.color.rgb = ink
+            paragraph.line_spacing = 1.05
+        footer_divider = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.9), Inches(6.62), Inches(11.35), Inches(0.018)
+        )
+        footer_divider.fill.solid()
+        footer_divider.fill.fore_color.rgb = mint
+        footer_divider.line.fill.background()
+        footer = slide.shapes.add_textbox(Inches(10.7), Inches(6.85), Inches(1.5), Inches(0.25))
+        footer.text_frame.text = f"{slide_index + 1} / {len(slides) + 1}"
+        footer.text_frame.paragraphs[0].alignment = PP_ALIGN.RIGHT
+        footer.text_frame.paragraphs[0].font.size = Pt(9)
+        footer.text_frame.paragraphs[0].font.color.rgb = green
         titles.append(item.title)
     output = BytesIO()
     presentation.save(output)
@@ -748,7 +993,7 @@ def _modify_presentation(source: bytes, plan_data: dict[str, Any]) -> tuple[byte
             shape for shape in slide.shapes if hasattr(shape, "text_frame") and shape != title
         ]
         if editable:
-            frame = editable[0].text_frame
+            frame = max(editable, key=lambda shape: shape.width * shape.height).text_frame
             paragraph = frame.add_paragraph()
             paragraph.text = instruction[:500]
             paragraph.font.size = Pt(16)
@@ -793,7 +1038,9 @@ async def _stream_research(session, run, settings, stage, emit):
     context = await _run_context(session, run, settings)
     harness = DeepResearchHarness(settings, budget)
     graph = build_research_graph(harness)
-    async with asyncio.timeout(settings.research_timeout_seconds):
+    # The harness reserves time for grounded synthesis; a tiny outer grace period
+    # lets LangGraph validation and Python cleanup finish inside the public budget.
+    async with asyncio.timeout(settings.research_timeout_seconds + 3):
         graph_state = await graph.ainvoke({"question": run.input, "context": context})
     result = ResearchResult.model_validate(graph_state["result"])
     call.status = "completed"

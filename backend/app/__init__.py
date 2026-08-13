@@ -1,2 +1,1 @@
 """Intelligence Hub API package."""
-

@@ -30,13 +30,18 @@ from app.files.service import (
     load_files_for_request,
 )
 from app.integrations.qwen import QwenAdapter
-from app.integrations.tavily import TavilyAdapter
+from app.integrations.tavily import (
+    comprehensive_search,
+    normalize_search_citations,
+    rerank_search_results,
+)
 from app.memory.service import (
     MemoryCommandResult,
     get_app_settings,
     handle_memory_command,
     relevant_memories,
 )
+from app.observability.langsmith import finish_trace, trace_operation
 from app.skills.service import select_skill, snapshot_skill
 
 _cancellations: dict[UUID, asyncio.Event] = {}
@@ -63,6 +68,24 @@ def should_search_web(content: str) -> bool:
         r"(?i)\b(?:search|browse|look up) (?:the )?(?:web|internet|online)\b",
     )
     return any(re.search(pattern, content) for pattern in explicit_patterns)
+
+
+def search_query_from_request(content: str) -> str:
+    """Remove UI trigger language before sending the semantic query to MCP search."""
+
+    cleaned = re.sub(
+        r"^(?:请|帮我|麻烦)?\s*(?:联网|上网|网上)?\s*(?:搜索|查找|查询|查|搜)\s*(?:一下)?\s*",
+        "",
+        content.strip(),
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"(?i)^(?:please\s+)?(?:search|browse|look up)\s+"
+        r"(?:the\s+)?(?:web|internet|online)\s*(?:for)?\s*",
+        "",
+        cleaned,
+    )
+    return cleaned.strip(" ：:，,") or content.strip()
 
 
 async def prepare_message(
@@ -250,6 +273,50 @@ async def _upsert_part(
 async def stream_prepared_message(
     session: AsyncSession, prepared: PreparedMessage, settings: Settings
 ):
+    tags = ["chat"]
+    if any(file.kind == "document" for file in prepared.files):
+        tags.append("rag")
+    if should_search_web(prepared.content):
+        tags.append("mcp-search")
+    with trace_operation(
+        settings,
+        "intelligence_hub.chat",
+        inputs={
+            "message": prepared.content,
+            "conversation_id": str(prepared.conversation.id),
+            "message_id": str(prepared.user.id),
+            "files": [
+                {"id": str(file.id), "name": file.name, "kind": file.kind}
+                for file in prepared.files
+            ],
+        },
+        tags=tags,
+        metadata={
+            "conversation_id": str(prepared.conversation.id),
+            "assistant_message_id": str(prepared.assistant.id),
+            "model": settings.qwen_chat_model,
+        },
+    ) as trace:
+        sources: list[dict[str, Any]] = []
+        async for event_type, payload in _stream_prepared_message(session, prepared, settings):
+            if event_type == "sources.finalized":
+                sources = list(payload.get("items") or [])
+            yield event_type, payload
+        finish_trace(
+            trace,
+            {
+                "answer": prepared.assistant.content,
+                "reasoning": prepared.assistant.reasoning,
+                "status": prepared.assistant.status,
+                "sources": sources,
+                "follow_up": prepared.assistant.follow_up,
+            },
+        )
+
+
+async def _stream_prepared_message(
+    session: AsyncSession, prepared: PreparedMessage, settings: Settings
+):
     event_seq = 0
 
     async def emit(event_type: str, payload: dict[str, Any]):
@@ -336,7 +403,10 @@ async def stream_prepared_message(
             session, prepared.files, prepared.content, settings
         )
         if file_context:
-            system_blocks.append(f"<file_context>\n{file_context}\n</file_context>")
+            system_blocks.append(
+                f"<file_context>\n{file_context}\n</file_context>\n"
+                "涉及文件事实时只能使用 file_context；资料未提供的内容应明确说明，禁止补写。"
+            )
         images = await image_inputs(prepared.files, settings)
         sources: list[dict[str, Any]] = [{**source, "kind": "file"} for source in file_sources]
         sources.extend(
@@ -352,6 +422,7 @@ async def stream_prepared_message(
         app_settings = await get_app_settings(session)
         explicit_search = should_search_web(prepared.content)
         allowed_web_urls: set[str] = set()
+        search_results = []
         if explicit_search:
             started = monotonic()
             tool = ToolCall(
@@ -375,7 +446,11 @@ async def stream_prepared_message(
             try:
                 if not app_settings.web_search_enabled:
                     raise RuntimeError("联网搜索已在设置中关闭")
-                search_results = await TavilyAdapter(settings).search(prepared.content)
+                search_query = search_query_from_request(prepared.content)
+                candidates = await comprehensive_search(search_query, settings)
+                search_results = await rerank_search_results(
+                    search_query, candidates, settings, limit=5
+                )
                 elapsed = int((monotonic() - started) * 1000)
                 tool.status = "completed"
                 tool.duration_ms = elapsed
@@ -392,7 +467,9 @@ async def stream_prepared_message(
                             f"[{index}] {result.title}\nURL: {result.url}\n{result.snippet}"
                             for index, result in enumerate(search_results, 1)
                         )
-                        + "\n</web_sources>\n回答涉及联网资料时，仅引用上述真实 URL。"
+                        + "\n</web_sources>\n回答只能使用上述资料中的事实。"
+                        "每个可核验事实后使用 Markdown 链接引用直接支持它的来源；"
+                        "URL 必须逐字来自 web_sources，摘要不支持的结论不要写。"
                     )
                 yield await emit(
                     "tool.completed",
@@ -455,11 +532,16 @@ async def stream_prepared_message(
                 await session.commit()
 
         if explicit_search:
+            streamed_content = assistant.content
+            assistant.content = normalize_search_citations(assistant.content, search_results)
             checked_content, removed_urls = remove_unverified_urls(
                 assistant.content, allowed_web_urls
             )
-            if removed_urls:
-                assistant.content = checked_content
+            assistant.content = checked_content
+            if search_results and not any(item.url in assistant.content for item in search_results):
+                primary = search_results[0]
+                assistant.content += f"\n\n来源：[{primary.title}]({primary.url})"
+            if assistant.content != streamed_content:
                 yield await emit(
                     "message.finalized",
                     {
