@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     app_port: int = 8000
     api_prefix: str = "/api"
     web_origin: str = "http://localhost:5173"
+    auth_secret_key: str = Field(
+        default="change-me-in-production-intelligence-hub", repr=False
+    )
+    auth_token_ttl_minutes: int = 12 * 60
 
     database_url: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/intelligence_hub_agents"
@@ -61,6 +65,12 @@ class Settings(BaseSettings):
     research_max_searches: int = 4
     research_timeout_seconds: int = 120
     slides_max_pages: int = 15
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        if self.app_env == "production" and self.auth_secret_key.startswith("change-me"):
+            raise ValueError("生产环境必须配置 AUTH_SECRET_KEY")
+        return self
 
     @property
     def model_ready(self) -> bool:

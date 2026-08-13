@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
+import { useAuth } from '@/features/auth/authStore'
 import { useChatStore } from '@/features/chat/chatStore'
 
 const chat = useChatStore()
+const auth = useAuth()
+const router = useRouter()
 const search = ref('')
 const editingId = ref<string | null>(null)
 const renameDraft = ref('')
@@ -31,6 +35,11 @@ function commitRename(id: string, current: string) {
 function confirmRemove(id: string) {
   pendingDeleteId.value = null
   void chat.removeConversation(id)
+}
+
+async function signOut() {
+  await auth.logout()
+  await router.replace({ name: 'login' })
 }
 </script>
 
@@ -94,7 +103,7 @@ function confirmRemove(id: string) {
     </nav>
     <div class="sidebar-footer">
       <RouterLink to="/settings" class="sidebar-link">⚙ 设置</RouterLink>
-      <div class="profile"><span>S</span><div><b>Personal</b><small>本地工作区</small></div></div>
+      <div class="profile"><span>{{ auth.user.value?.display_name.slice(0, 1) }}</span><div><b>{{ auth.user.value?.display_name }}</b><small>{{ auth.user.value?.role === 'admin' ? '管理员' : auth.user.value?.phone }}</small></div><button type="button" title="退出登录" @click="signOut">退出</button></div>
     </div>
   </aside>
 </template>

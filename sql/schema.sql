@@ -5,8 +5,20 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    phone VARCHAR(11) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    display_name VARCHAR(80) NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE conversations (
     id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     mode VARCHAR(20) NOT NULL DEFAULT 'chat' CHECK (mode IN ('chat', 'work')),
     title VARCHAR(120) NOT NULL DEFAULT '新会话',
     title_source VARCHAR(20) NOT NULL DEFAULT 'default'
@@ -19,13 +31,15 @@ CREATE TABLE conversations (
 
 CREATE TABLE skills (
     id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     name VARCHAR(80) NOT NULL,
-    normalized_name VARCHAR(80) NOT NULL UNIQUE,
+    normalized_name VARCHAR(80) NOT NULL,
     description VARCHAR(500) NOT NULL DEFAULT '',
     instructions TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, normalized_name)
 );
 
 CREATE TABLE skill_snapshots (
@@ -39,7 +53,8 @@ CREATE TABLE skill_snapshots (
 );
 
 CREATE TABLE app_settings (
-    id INTEGER PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL UNIQUE REFERENCES users (id) ON DELETE CASCADE,
     memory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     web_search_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     appearance VARCHAR(20) NOT NULL DEFAULT 'system'
@@ -48,7 +63,8 @@ CREATE TABLE app_settings (
 );
 
 CREATE TABLE memory_summaries (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL UNIQUE REFERENCES users (id) ON DELETE CASCADE,
     content TEXT NOT NULL DEFAULT '',
     source VARCHAR(20) NOT NULL DEFAULT 'manual'
         CHECK (source IN ('manual', 'explicit', 'automatic')),
@@ -56,8 +72,6 @@ CREATE TABLE memory_summaries (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-INSERT INTO memory_summaries (id, content, source) VALUES (1, '', 'manual');
 
 CREATE TABLE files (
     id UUID PRIMARY KEY,
@@ -214,6 +228,8 @@ ALTER TABLE messages
     FOREIGN KEY (run_id) REFERENCES agent_runs (id) ON DELETE SET NULL;
 
 CREATE INDEX ix_conversations_last_activity_at ON conversations (last_activity_at);
+CREATE INDEX ix_conversations_user_id ON conversations (user_id);
+CREATE INDEX ix_skills_user_id ON skills (user_id);
 CREATE INDEX ix_skill_snapshots_skill_id ON skill_snapshots (skill_id);
 CREATE INDEX ix_skill_snapshots_content_hash ON skill_snapshots (content_hash);
 CREATE INDEX ix_memory_summaries_source_conversation_id
@@ -241,9 +257,5 @@ CREATE INDEX ix_run_checkpoints_created_at ON run_checkpoints (created_at);
 CREATE INDEX ix_artifacts_run_id ON artifacts (run_id);
 CREATE INDEX ix_artifacts_parent_artifact_id ON artifacts (parent_artifact_id);
 CREATE INDEX ix_artifacts_created_at ON artifacts (created_at);
-
-INSERT INTO app_settings (id)
-VALUES (1)
-ON CONFLICT (id) DO NOTHING;
 
 COMMIT;

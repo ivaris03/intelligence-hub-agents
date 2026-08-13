@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.security import current_user_id
 from app.db.base import Skill, SkillSnapshot
 
 
@@ -43,10 +44,15 @@ async def select_skills(
     skill_ids: list[UUID],
     content: str | None = None,
 ) -> list[Skill]:
+    owner_id = current_user_id()
     if skill_ids:
         skills = (
             await session.scalars(
-                select(Skill).where(Skill.id.in_(skill_ids), Skill.enabled.is_(True))
+                select(Skill).where(
+                    Skill.id.in_(skill_ids),
+                    Skill.user_id == owner_id,
+                    Skill.enabled.is_(True),
+                )
             )
         ).all()
         by_id = {skill.id: skill for skill in skills}
@@ -56,7 +62,13 @@ async def select_skills(
     if not content:
         return []
 
-    enabled = (await session.scalars(select(Skill).where(Skill.enabled.is_(True)))).all()
+    enabled = (
+        await session.scalars(
+            select(Skill).where(
+                Skill.user_id == owner_id, Skill.enabled.is_(True)
+            )
+        )
+    ).all()
     ranked: list[tuple[float, Skill]] = []
     for skill in enabled:
         candidate = _remove_at_mention(content, skill.name)

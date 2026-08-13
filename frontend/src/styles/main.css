@@ -49,7 +49,7 @@ button { cursor: pointer; }
 .sidebar-link { display: block; padding: 10px; border-radius: 8px; color: #5f5b53; text-decoration: none; font-size: 13px; }
 .profile { display: flex; align-items: center; gap: 9px; padding: 12px 8px 0; }
 .profile > span { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #cbc6bc; border-radius: 50%; background: #f6f3ed; }
-.profile div { display: grid; font-size: 12px; }.profile small { color: var(--muted); margin-top: 2px; }
+.profile div { display: grid; min-width: 0; flex: 1; font-size: 12px; }.profile small { color: var(--muted); margin-top: 2px; }.profile b, .profile small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.profile > button { border: 0; background: transparent; color: var(--muted); font-size: 10px; }
 
 .sidebar-search { display: flex; align-items: center; gap: 7px; margin-top: 10px; padding: 8px 10px; border: 1px solid transparent; border-radius: 9px; color: #88847b; background: rgba(255,255,255,.34); }
 .sidebar-search:focus-within { border-color: #c7c2b8; background: rgba(255,255,255,.64); }
@@ -165,7 +165,12 @@ button { cursor: pointer; }
 :root[data-theme='dark'] .chat-main, :root[data-theme='dark'] .settings-layout { background: var(--paper); }
 :root[data-theme='dark'] .composer, :root[data-theme='dark'] .file-popover, :root[data-theme='dark'] .settings-card button, :root[data-theme='dark'] .settings-card select, :root[data-theme='dark'] .editor-card input, :root[data-theme='dark'] .editor-card textarea, :root[data-theme='dark'] .memory-add input, :root[data-theme='dark'] .memory-inline-editor, :root[data-theme='dark'] .item-actions button, :root[data-theme='dark'] .clear-memory-actions > button:not(.danger-outline) { background: #272b28; color: var(--ink); }
 :root[data-theme='dark'] .message.user .message-body, :root[data-theme='dark'] .run-request { background: #303530; }
+.artifact-download { width: fit-content; margin-top: 7px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
+.login-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: radial-gradient(circle at 20% 10%, #e0ebe6 0, transparent 34%), var(--paper); }
+.login-card { width: min(430px, 100%); padding: 42px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.72); box-shadow: 0 24px 70px var(--shadow); }.login-brand { padding: 0 0 38px; }.login-card h1 { margin: 5px 0 8px; font-family: Georgia,'Noto Serif SC',serif; font-size: 36px; font-weight: 400; }.login-intro { margin: 0 0 28px; color: var(--muted); font-size: 13px; }.login-card form { display: grid; gap: 16px; }.login-card label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }.login-card input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; outline: 0; background: white; color: var(--ink); }.login-card input:focus { border-color: var(--accent); }.login-card button { margin-top: 5px; padding: 11px; border: 0; border-radius: 9px; }.login-card button:disabled { opacity: .55; }.login-error { margin: -4px 0 0; color: var(--danger); font-size: 12px; }
+
 :root[data-theme='dark'] .run-card, :root[data-theme='dark'] .tool-card { background: rgba(39,43,40,.8); }
+:root[data-theme='dark'] .login-card { background: rgba(39,43,40,.88); }:root[data-theme='dark'] .login-card input { background: #272b28; color: var(--ink); }
 
 @media (max-width: 760px) {
   .app-layout { grid-template-columns: 1fr; }.sidebar { display: none; }.suggestions { grid-template-columns: 1fr; width: min(100%, 360px); margin-top: 28px; }.topbar { padding: 0 14px; }.composer-shell { padding-inline: 12px; }.message-list { padding-inline: 16px; }.settings-layout { grid-template-columns: 1fr; }

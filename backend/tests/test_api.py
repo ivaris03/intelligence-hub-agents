@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
+from app.auth.security import get_current_user
 from app.core.config import Settings, get_settings
+from app.db.base import User
 from app.main import app
 
 app.dependency_overrides[get_settings] = lambda: Settings(
@@ -10,6 +12,13 @@ app.dependency_overrides[get_settings] = lambda: Settings(
     langsmith_api_key=None,
 )
 client = TestClient(app)
+app.dependency_overrides[get_current_user] = lambda: User(
+    phone="13900000001",
+    password_hash="unused",
+    display_name="测试用户",
+    role="admin",
+    is_active=True,
+)
 
 
 def test_health() -> None:

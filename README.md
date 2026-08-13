@@ -13,6 +13,7 @@ Intelligence Hub 是一个面向个人工作区的 ChatGPT 风格 Agent Hub。�
 - 演示 Agent：LangGraph 大纲中断确认、LangChain 结构化页面、PPTX 生成、定向修改、版本链和 PostgreSQL 检查点恢复。
 - 研究 Agent：外层 LangGraph、共享搜索/总时长预算、Deep Agents 证据子 Agent、URL/引用复验和 Markdown 产物。
 - 统一的 `agent_runs`、阶段事件、脱敏工具记录与 Artifact 下载接口；本地文件和 MinIO 两种存储适配。
+- 手机号/密码登录、管理员/普通用户 RBAC，以及会话、文件、任务、Skill、Memory 和设置的用户级数据隔离；暂不提供独立管理端。
 
 ## 技术结构
 
@@ -70,6 +71,8 @@ npm run dev
 
 打开 <http://127.0.0.1:5173>。健康检查为 <http://127.0.0.1:8000/api/health>，OpenAPI 文档为 <http://127.0.0.1:8000/docs>。
 
+迁移会初始化 21 个账号：`13700000001` 至 `13700000020` 均为普通用户，`13900000001` 为管理员，初始密码统一为 `12345678`。生产使用前应更换初始密码策略，并为 `AUTH_SECRET_KEY` 配置独立随机值。
+
 MinIO API 默认监听 <http://127.0.0.1:9000>，管理控制台为 <http://127.0.0.1:9001>。本地默认账号和密码均为 `minioadmin`；后端首次保存文件时会自动创建 `intelligence-hub-agents` bucket。
 
 Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空数据库的完整参考结构，`sql/data.sql` 是迁移后可选的幂等演示数据；不要在同一个数据库上混用参考建表脚本与 Alembic。
@@ -81,6 +84,7 @@ Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空�
 | 变量 | 用途 |
 | --- | --- |
 | `DATABASE_URL` | SQLAlchemy 异步 PostgreSQL 地址；LangGraph 会自动转换为 psycopg 地址 |
+| `AUTH_SECRET_KEY` / `AUTH_TOKEN_TTL_MINUTES` | 登录令牌签名密钥与有效期；生产环境必须显式配置密钥 |
 | `DASHSCOPE_API_KEY` | Qwen Chat、Vision、Embedding 与 Image |
 | `QWEN_*_MODEL` | 分别覆盖 Chat、Work、Vision、Embedding 和图片模型 |
 | `QWEN_THINKING_BUDGET` | Chat/Work 流式思考预算，默认 1024 tokens |
@@ -125,7 +129,7 @@ LangSmith 的四个版本化 dataset、指标定义、基线/优化结果和复�
 
 ## MVP 边界
 
-- 单用户本地工作区，无登录、团队权限、计费或分布式任务队列。
+- 当前提供独立用户工作区与管理员/普通用户两级权限，不包含组织、团队空间、细粒度自定义角色、计费或分布式任务队列。
 - 首版不支持任意外部 PPTX 编辑、OCR、表格文件或图片向量检索。
 - 模型和搜索结果仍需人工核对；联网验收需要有效的百炼和 Tavily 凭据。
 - 开发配置默认使用本地目录；生产化的对象存储、密钥管理、审计与高可用不在 P0 范围。
