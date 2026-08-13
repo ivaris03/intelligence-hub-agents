@@ -58,8 +58,6 @@ class Settings(BaseSettings):
     document_chunk_chars: int = 1_200
     document_chunk_overlap: int = 150
     recent_message_limit: int = 12
-    memory_max_items: int = 5
-    memory_context_chars: int = 1_500
     research_max_searches: int = 4
     research_timeout_seconds: int = 120
     slides_max_pages: int = 15

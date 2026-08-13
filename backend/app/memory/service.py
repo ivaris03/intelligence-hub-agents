@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
 from app.core.security import contains_sensitive_memory
-from app.db.base import AppSettings, Conversation, Memory, Message
+from app.db.base import AppSettings, Conversation, MemorySummary, Message
+
+MEMORY_SUMMARY_ID = 1
+MAX_MEMORY_SUMMARY_CHARS = 4_000
 
 
 @dataclass(slots=True)
@@ -26,10 +27,6 @@ def normalize_memory(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
-def memory_key(text: str) -> str:
-    return hashlib.sha256(normalize_memory(text).encode()).hexdigest()
-
-
 async def get_app_settings(session: AsyncSession) -> AppSettings:
     settings = await session.get(AppSettings, 1)
     if settings is None:
@@ -37,6 +34,23 @@ async def get_app_settings(session: AsyncSession) -> AppSettings:
         session.add(settings)
         await session.flush()
     return settings
+
+
+async def get_memory_summary_record(session: AsyncSession) -> MemorySummary:
+    summary = await session.get(MemorySummary, MEMORY_SUMMARY_ID)
+    if summary is None:
+        summary = MemorySummary(id=MEMORY_SUMMARY_ID, content="", source="manual")
+        session.add(summary)
+        await session.flush()
+    return summary
+
+
+async def memory_summary(session: AsyncSession) -> str:
+    app_settings = await get_app_settings(session)
+    if not app_settings.memory_enabled:
+        return ""
+    summary = await get_memory_summary_record(session)
+    return summary.content.strip()
 
 
 def parse_memory_command(content: str) -> tuple[str, str] | None:
@@ -54,6 +68,33 @@ def parse_memory_command(content: str) -> tuple[str, str] | None:
     return None
 
 
+def _summary_facts(text: str) -> list[str]:
+    facts: list[str] = []
+    for part in re.split(r"[。！？!?；;\n]+", text):
+        fact = re.sub(r"^\s*[-*•]\s*", "", part).strip(" ，,。；;\t")
+        if fact and normalize_memory(fact) not in {normalize_memory(item) for item in facts}:
+            facts.append(fact)
+    return facts
+
+
+def _compose_summary(facts: list[str]) -> str:
+    cleaned = [fact.strip(" ，,。；;\t") for fact in facts if fact.strip(" ，,。；;\t")]
+    if not cleaned:
+        return ""
+    return "；".join(cleaned) + "。"
+
+
+def _append_fact(summary: str, fact: str) -> str | None:
+    facts = _summary_facts(summary)
+    normalized = normalize_memory(fact)
+    if any(normalize_memory(item) == normalized for item in facts):
+        return summary
+    candidate = _compose_summary([*facts, fact])
+    if len(candidate) > MAX_MEMORY_SUMMARY_CHARS:
+        return None
+    return candidate
+
+
 async def handle_memory_command(
     session: AsyncSession, conversation_id: UUID, content: str
 ) -> MemoryCommandResult | None:
@@ -62,70 +103,41 @@ async def handle_memory_command(
         return None
     app_settings = await get_app_settings(session)
     if not app_settings.memory_enabled:
-        return MemoryCommandResult("disabled", "Memory 已关闭，本次没有写入或删除记忆。", 0)
+        return MemoryCommandResult("disabled", "Memory 已关闭，本次没有更新记忆摘要。", 0)
     action, target = command
     if not target:
         return MemoryCommandResult(action, "请说明需要记住或忘记的具体内容。", 0)
+
+    summary = await get_memory_summary_record(session)
     if action == "remember":
         if contains_sensitive_memory(target):
             return MemoryCommandResult(
                 action, "这段内容可能包含密码、密钥或支付信息，已拒绝保存。", 0
             )
-        key = memory_key(target)
-        existing = await session.scalar(select(Memory).where(Memory.normalized_key == key))
-        if existing:
-            existing.content = target
-            existing.source = "explicit"
-            existing.source_conversation_id = conversation_id
-            return MemoryCommandResult(action, f"已经记住：{target}", 1)
-        session.add(
-            Memory(
-                content=target,
-                normalized_key=key,
-                source="explicit",
-                source_conversation_id=conversation_id,
-            )
-        )
-        return MemoryCommandResult(action, f"已经记住：{target}", 1)
+        updated = _append_fact(summary.content, target)
+        if updated is None:
+            return MemoryCommandResult(action, "用户记忆摘要已达到长度上限，请先精简。", 0)
+        changed = int(updated != summary.content)
+        summary.content = updated
+        summary.source = "explicit"
+        summary.source_conversation_id = conversation_id
+        return MemoryCommandResult(action, f"已更新用户记忆摘要：{target}", changed)
 
+    facts = _summary_facts(summary.content)
     normalized_target = normalize_memory(target)
-    memories = (await session.scalars(select(Memory))).all()
     matches = [
-        memory
-        for memory in memories
-        if normalized_target in normalize_memory(memory.content)
-        or normalize_memory(memory.content) in normalized_target
-        or _relevance(target, memory.content) >= 0.5
+        fact
+        for fact in facts
+        if normalized_target in normalize_memory(fact)
+        or normalize_memory(fact) in normalized_target
+        or _relevance(target, fact) >= 0.5
     ]
-    for memory in matches:
-        await session.delete(memory)
     if not matches:
-        return MemoryCommandResult(action, f"没有找到与“{target}”匹配的记忆。", 0)
-    return MemoryCommandResult(action, f"已忘记 {len(matches)} 条相关记忆。", len(matches))
-
-
-async def relevant_memories(session: AsyncSession, query: str, settings: Settings) -> list[Memory]:
-    app_settings = await get_app_settings(session)
-    if not app_settings.memory_enabled:
-        return []
-    memories = (await session.scalars(select(Memory).order_by(Memory.updated_at.desc()))).all()
-    ranked = sorted(
-        ((_relevance(query, memory.content), memory) for memory in memories),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-    selected: list[Memory] = []
-    chars = 0
-    for score, memory in ranked:
-        if score <= 0:
-            continue
-        if chars + len(memory.content) > settings.memory_context_chars:
-            continue
-        selected.append(memory)
-        chars += len(memory.content)
-        if len(selected) >= settings.memory_max_items:
-            break
-    return selected
+        return MemoryCommandResult(action, f"记忆摘要中没有找到与“{target}”匹配的内容。", 0)
+    summary.content = _compose_summary([fact for fact in facts if fact not in matches])
+    summary.source = "explicit"
+    summary.source_conversation_id = conversation_id
+    return MemoryCommandResult(action, "已从用户记忆摘要中移除相关内容。", len(matches))
 
 
 def _terms(text: str) -> set[str]:
@@ -174,8 +186,8 @@ def _memory_slot(text: str) -> tuple[str, str] | None:
     return predicate, topic
 
 
-async def refine_idle_memories(
-    session: AsyncSession, settings: Settings, now: datetime | None = None
+async def refine_idle_memory_summary(
+    session: AsyncSession, now: datetime | None = None
 ) -> int:
     app_settings = await get_app_settings(session)
     if not app_settings.memory_enabled:
@@ -192,9 +204,12 @@ async def refine_idle_memories(
             )
         )
     ).all()
+    summary = await get_memory_summary_record(session)
+    facts = _summary_facts(summary.content)
+    signatures = {_subject_signature(fact) for fact in facts}
     written = 0
-    all_memories = (await session.scalars(select(Memory))).all()
-    signatures = {_subject_signature(memory.content): memory for memory in all_memories}
+    last_source_conversation_id: UUID | None = None
+
     for conversation in conversations:
         query = select(Message).where(
             Message.conversation_id == conversation.id,
@@ -207,42 +222,31 @@ async def refine_idle_memories(
         for candidate in _extract_candidates(messages):
             if contains_sensitive_memory(candidate):
                 continue
-            key = memory_key(candidate)
-            if any(memory.normalized_key == key for memory in all_memories):
+            normalized_candidate = normalize_memory(candidate)
+            if any(normalize_memory(fact) == normalized_candidate for fact in facts):
                 continue
             signature = _subject_signature(candidate)
             candidate_slot = _memory_slot(candidate)
-            conflicting = signatures.get(signature)
-            slot_conflict = next(
-                (
-                    memory
-                    for memory in all_memories
-                    if candidate_slot is not None
-                    and _memory_slot(memory.content) == candidate_slot
-                    and normalize_memory(memory.content) != normalize_memory(candidate)
-                ),
-                None,
+            slot_conflict = any(
+                candidate_slot is not None
+                and _memory_slot(fact) == candidate_slot
+                and normalize_memory(fact) != normalized_candidate
+                for fact in facts
             )
-            if (conflicting or slot_conflict) and not any(
-                normalize_memory(memory.content) == normalize_memory(candidate)
-                for memory in all_memories
-            ):
+            if signature in signatures or slot_conflict:
                 continue
-            memory = Memory(
-                content=candidate,
-                normalized_key=key,
-                source="automatic",
-                source_conversation_id=conversation.id,
-            )
-            session.add(memory)
-            all_memories.append(memory)
-            signatures[signature] = memory
+            updated = _append_fact(_compose_summary(facts), candidate)
+            if updated is None:
+                continue
+            facts = _summary_facts(updated)
+            signatures.add(signature)
             written += 1
+            last_source_conversation_id = conversation.id
         conversation.memory_cursor = conversation.last_activity_at
+
+    if written:
+        summary.content = _compose_summary(facts)
+        summary.source = "automatic"
+        summary.source_conversation_id = last_source_conversation_id
     await session.commit()
     return written
-
-
-async def clear_memories(session: AsyncSession) -> int:
-    result = await session.execute(delete(Memory))
-    return int(result.rowcount or 0)

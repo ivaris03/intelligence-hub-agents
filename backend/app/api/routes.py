@@ -37,9 +37,8 @@ from app.api.schemas import (
     ConversationPatch,
     FileOut,
     HealthResponse,
-    MemoryCreate,
-    MemoryOut,
-    MemoryPatch,
+    MemorySummaryOut,
+    MemorySummaryUpdate,
     MessageOut,
     MessageRequest,
     SkillCreate,
@@ -59,7 +58,7 @@ from app.db.base import (
     AgentRun,
     Artifact,
     Conversation,
-    Memory,
+    MemorySummary,
     Message,
     MessageFile,
     Skill,
@@ -70,10 +69,9 @@ from app.files.service import FileValidationError, create_file
 from app.files.storage import get_storage
 from app.integrations.qwen import QwenAdapter
 from app.memory.service import (
-    clear_memories,
     get_app_settings,
-    memory_key,
-    refine_idle_memories,
+    get_memory_summary_record,
+    refine_idle_memory_summary,
 )
 from app.skills.service import normalize_skill_name
 
@@ -483,68 +481,45 @@ async def delete_skill(skill_id: UUID, session: SessionDep) -> None:
     await session.commit()
 
 
-@router.get("/memories", response_model=list[MemoryOut])
-async def list_memories(session: SessionDep) -> list[Memory]:
-    return list((await session.scalars(select(Memory).order_by(Memory.updated_at.desc()))).all())
+@router.get("/memory-summary", response_model=MemorySummaryOut)
+async def read_memory_summary(session: SessionDep) -> MemorySummary:
+    summary = await get_memory_summary_record(session)
+    await session.commit()
+    await session.refresh(summary)
+    return summary
 
 
-@router.post("/memories", response_model=MemoryOut, status_code=status.HTTP_201_CREATED)
-async def create_memory(payload: MemoryCreate, session: SessionDep) -> Memory:
+@router.put("/memory-summary", response_model=MemorySummaryOut)
+async def update_memory_summary(
+    payload: MemorySummaryUpdate, session: SessionDep
+) -> MemorySummary:
     app_settings = await get_app_settings(session)
     if not app_settings.memory_enabled:
         raise HTTPException(409, "Memory 已关闭")
     content = payload.content.strip()
-    if contains_sensitive_memory(content):
+    if content and contains_sensitive_memory(content):
         raise HTTPException(400, "不能保存密码、密钥、支付信息等敏感内容")
-    memory = Memory(content=content, normalized_key=memory_key(content), source="manual")
-    session.add(memory)
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(409, "相同记忆已存在") from exc
-    await session.refresh(memory)
-    return memory
+    summary = await get_memory_summary_record(session)
+    summary.content = content
+    summary.source = "manual"
+    summary.source_conversation_id = None
+    await session.commit()
+    await session.refresh(summary)
+    return summary
 
 
-@router.patch("/memories/{memory_id}", response_model=MemoryOut)
-async def patch_memory(memory_id: UUID, payload: MemoryPatch, session: SessionDep) -> Memory:
-    memory = await session.get(Memory, memory_id)
-    if memory is None:
-        raise HTTPException(404, "Memory 不存在")
-    content = payload.content.strip()
-    if contains_sensitive_memory(content):
-        raise HTTPException(400, "不能保存密码、密钥、支付信息等敏感内容")
-    memory.content = content
-    memory.normalized_key = memory_key(content)
-    memory.source = "manual"
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(409, "相同记忆已存在") from exc
-    await session.refresh(memory)
-    return memory
-
-
-@router.delete("/memories/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_memory(memory_id: UUID, session: SessionDep) -> None:
-    memory = await session.get(Memory, memory_id)
-    if memory is None:
-        raise HTTPException(404, "Memory 不存在")
-    await session.delete(memory)
+@router.delete("/memory-summary", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_memory_summary(session: SessionDep) -> None:
+    summary = await get_memory_summary_record(session)
+    summary.content = ""
+    summary.source = "manual"
+    summary.source_conversation_id = None
     await session.commit()
 
 
-@router.delete("/memories", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_all_memories(session: SessionDep) -> None:
-    await clear_memories(session)
-    await session.commit()
-
-
-@router.post("/maintenance/memories/refine")
-async def refine_memories(session: SessionDep, settings: SettingsDep) -> dict[str, int]:
-    return {"created": await refine_idle_memories(session, settings)}
+@router.post("/maintenance/memory-summary/refine")
+async def refine_memory_summary(session: SessionDep) -> dict[str, int]:
+    return {"added_facts": await refine_idle_memory_summary(session)}
 
 
 @router.get("/settings", response_model=AppSettingsOut)

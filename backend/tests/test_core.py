@@ -6,6 +6,7 @@ import pytest
 from docx import Document
 from PIL import Image
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agents.workflows import (
@@ -24,11 +25,11 @@ from app.api.schemas import MessageRequest
 from app.chat.service import should_search_web
 from app.core.config import Settings
 from app.core.security import contains_sensitive_memory, redact, remove_unverified_urls
-from app.db.base import AppSettings, Base, Conversation, Memory, Message
+from app.db.base import AppSettings, Base, Conversation, MemorySummary, Message
 from app.files.service import FileValidationError, validate_upload
 from app.integrations.qwen import QwenAdapter
 from app.integrations.tavily import SearchResult, TavilyAdapter
-from app.memory.service import parse_memory_command, refine_idle_memories
+from app.memory.service import parse_memory_command, refine_idle_memory_summary
 from app.skills.service import normalize_skill_name
 
 
@@ -226,7 +227,7 @@ def test_tavily_normalizes_nested_mcp_content() -> None:
     }
 
 
-def test_idle_memory_refinement_is_cursor_based_safe_and_switchable() -> None:
+def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() -> None:
     async def scenario() -> None:
         engine = create_async_engine("sqlite+aiosqlite://")
         sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -247,11 +248,11 @@ def test_idle_memory_refinement_is_cursor_based_safe_and_switchable() -> None:
                 )
             )
             await session.commit()
-            settings = Settings(dashscope_api_key=None, tavily_api_key=None)
-            assert await refine_idle_memories(session, settings, now=now) == 1
-            assert await refine_idle_memories(session, settings, now=now) == 0
-            saved = list((await session.scalars(Memory.__table__.select())).all())
+            assert await refine_idle_memory_summary(session, now=now) == 1
+            assert await refine_idle_memory_summary(session, now=now) == 0
+            saved = list((await session.scalars(select(MemorySummary))).all())
             assert len(saved) == 1
+            assert saved[0].content == "我偏好简洁回答。"
 
             second = Conversation(last_activity_at=now - timedelta(minutes=31))
             session.add(second)
@@ -266,7 +267,7 @@ def test_idle_memory_refinement_is_cursor_based_safe_and_switchable() -> None:
                 )
             )
             await session.commit()
-            assert await refine_idle_memories(session, settings, now=now) == 0
+            assert await refine_idle_memory_summary(session, now=now) == 0
 
             stored_settings = await session.get(AppSettings, 1)
             assert stored_settings is not None
@@ -284,7 +285,7 @@ def test_idle_memory_refinement_is_cursor_based_safe_and_switchable() -> None:
                 )
             )
             await session.commit()
-            assert await refine_idle_memories(session, settings, now=now) == 0
+            assert await refine_idle_memory_summary(session, now=now) == 0
         await engine.dispose()
 
     asyncio.run(scenario())

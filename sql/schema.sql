@@ -47,17 +47,17 @@ CREATE TABLE app_settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE memories (
-    id UUID PRIMARY KEY,
-    content TEXT NOT NULL,
-    normalized_key VARCHAR(255) NOT NULL UNIQUE,
-    embedding VECTOR(1024),
+CREATE TABLE memory_summaries (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    content TEXT NOT NULL DEFAULT '',
     source VARCHAR(20) NOT NULL DEFAULT 'manual'
         CHECK (source IN ('manual', 'explicit', 'automatic')),
     source_conversation_id UUID REFERENCES conversations (id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+INSERT INTO memory_summaries (id, content, source) VALUES (1, '', 'manual');
 
 CREATE TABLE files (
     id UUID PRIMARY KEY,
@@ -208,7 +208,8 @@ ALTER TABLE messages
 CREATE INDEX ix_conversations_last_activity_at ON conversations (last_activity_at);
 CREATE INDEX ix_skill_snapshots_skill_id ON skill_snapshots (skill_id);
 CREATE INDEX ix_skill_snapshots_content_hash ON skill_snapshots (content_hash);
-CREATE INDEX ix_memories_source_conversation_id ON memories (source_conversation_id);
+CREATE INDEX ix_memory_summaries_source_conversation_id
+    ON memory_summaries (source_conversation_id);
 CREATE INDEX ix_files_conversation_id ON files (conversation_id);
 CREATE INDEX ix_files_created_at ON files (created_at);
 CREATE INDEX ix_file_chunks_file_id ON file_chunks (file_id);

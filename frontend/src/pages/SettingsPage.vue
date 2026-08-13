@@ -2,35 +2,33 @@
 import { onMounted, reactive, ref } from 'vue'
 
 import {
-  memoriesApi,
+  memorySummaryApi,
   settingsApi,
   skillsApi,
   type AppSettings,
-  type MemoryRecord,
+  type MemorySummary,
   type Skill,
 } from '@/lib/api'
 
 const settings = ref<AppSettings | null>(null)
 const skills = ref<Skill[]>([])
-const memories = ref<MemoryRecord[]>([])
+const memorySummary = ref<MemorySummary | null>(null)
+const memoryDraft = ref('')
 const loading = ref(true)
 const error = ref('')
 const editingSkillId = ref<string | null>(null)
 const pendingSkillDeleteId = ref<string | null>(null)
-const editingMemoryId = ref<string | null>(null)
-const memoryEditContent = ref('')
-const pendingMemoryDeleteId = ref<string | null>(null)
-const clearMemoriesArmed = ref(false)
+const clearMemoryArmed = ref(false)
 const skillForm = reactive({ name: '', description: '', instructions: '', enabled: true })
-const memoryContent = ref('')
 
 onMounted(async () => {
   try {
-    ;[settings.value, skills.value, memories.value] = await Promise.all([
+    ;[settings.value, skills.value, memorySummary.value] = await Promise.all([
       settingsApi.get(),
       skillsApi.list(),
-      memoriesApi.list(),
+      memorySummaryApi.get(),
     ])
+    memoryDraft.value = memorySummary.value.content
     applyTheme(settings.value.appearance)
   } catch (cause) {
     report(cause)
@@ -96,49 +94,21 @@ async function removeSkill(skill: Skill) {
   }
 }
 
-async function addMemory() {
-  if (!memoryContent.value.trim()) return
+async function saveMemorySummary() {
   try {
-    memories.value.unshift(await memoriesApi.create(memoryContent.value.trim()))
-    memoryContent.value = ''
+    memorySummary.value = await memorySummaryApi.update(memoryDraft.value.trim())
+    memoryDraft.value = memorySummary.value.content
   } catch (cause) {
     report(cause)
   }
 }
 
-function editMemory(memory: MemoryRecord) {
-  editingMemoryId.value = memory.id
-  memoryEditContent.value = memory.content
-}
-
-async function saveMemory(memory: MemoryRecord) {
-  const content = memoryEditContent.value.trim()
-  if (!content) return
+async function clearMemorySummary() {
   try {
-    const updated = await memoriesApi.update(memory.id, content)
-    const index = memories.value.findIndex((item) => item.id === memory.id)
-    if (index >= 0) memories.value[index] = updated
-    editingMemoryId.value = null
-  } catch (cause) {
-    report(cause)
-  }
-}
-
-async function removeMemory(memory: MemoryRecord) {
-  try {
-    await memoriesApi.remove(memory.id)
-    memories.value = memories.value.filter((item) => item.id !== memory.id)
-    pendingMemoryDeleteId.value = null
-  } catch (cause) {
-    report(cause)
-  }
-}
-
-async function clearMemories() {
-  try {
-    await memoriesApi.clear()
-    memories.value = []
-    clearMemoriesArmed.value = false
+    await memorySummaryApi.clear()
+    memoryDraft.value = ''
+    if (memorySummary.value) memorySummary.value.content = ''
+    clearMemoryArmed.value = false
   } catch (cause) {
     report(cause)
   }
@@ -157,8 +127,8 @@ function applyTheme(theme: AppSettings['appearance']) {
   document.documentElement.dataset.theme = theme
 }
 
-function sourceLabel(memory: MemoryRecord) {
-  return { manual: '设置页添加', explicit: '对话指令', automatic: '闲置提炼' }[memory.source]
+function sourceLabel(source: MemorySummary['source']) {
+  return { manual: '设置页编辑', explicit: '对话指令', automatic: '闲置提炼' }[source]
 }
 </script>
 
@@ -221,36 +191,15 @@ function sourceLabel(memory: MemoryRecord) {
         </section>
 
         <section id="memory" class="settings-section">
-          <header><div><span class="section-kicker">MEMORY</span><h2>长期记忆</h2><p>关闭后不提炼、不写入，也不注入上下文；已有内容保留。</p></div><label class="switch"><input :checked="settings.memory_enabled" type="checkbox" aria-label="启用 Memory" @change="updateSetting({ memory_enabled: !settings?.memory_enabled })" /><span></span></label></header>
-          <form class="memory-add" @submit.prevent="addMemory"><input v-model="memoryContent" :disabled="!settings.memory_enabled" maxlength="500" placeholder="添加稳定的偏好或背景信息" /><button class="primary-action" :disabled="!settings.memory_enabled">添加</button></form>
-          <div class="manage-list memory-list">
-            <article v-for="memory in memories" :key="memory.id" class="manage-item">
-              <div>
-                <input
-                  v-if="editingMemoryId === memory.id"
-                  v-model="memoryEditContent"
-                  class="memory-inline-editor"
-                  aria-label="Memory 内容"
-                  maxlength="500"
-                  @keydown.enter.prevent="saveMemory(memory)"
-                  @keydown.escape.prevent="editingMemoryId = null"
-                />
-                <p v-else class="memory-content">{{ memory.content }}</p>
-                <small>{{ sourceLabel(memory) }} · {{ new Date(memory.updated_at).toLocaleString() }}</small>
-              </div>
-              <div v-if="editingMemoryId === memory.id" class="item-actions"><button class="primary-action" @click="saveMemory(memory)">保存</button><button @click="editingMemoryId = null">取消</button></div>
-              <div v-else class="item-actions">
-                <button @click="editMemory(memory)">编辑</button>
-                <button v-if="pendingMemoryDeleteId !== memory.id" class="danger" @click="pendingMemoryDeleteId = memory.id">删除</button>
-                <button v-else class="danger" @click="removeMemory(memory)">确认删除</button>
-                <button v-if="pendingMemoryDeleteId === memory.id" @click="pendingMemoryDeleteId = null">取消</button>
-              </div>
-            </article>
-            <p v-if="!memories.length" class="manage-empty">暂无 Memory。也可以在对话中说“请记住…”来添加。</p>
-          </div>
-          <div v-if="memories.length" class="clear-memory-actions">
-            <button v-if="!clearMemoriesArmed" class="danger-outline" @click="clearMemoriesArmed = true">清空全部 Memory</button>
-            <template v-else><button class="danger-outline" @click="clearMemories">确认清空</button><button @click="clearMemoriesArmed = false">取消</button></template>
+          <header><div><span class="section-kicker">MEMORY</span><h2>用户记忆摘要</h2><p>每次对话都会将整份摘要注入 System Prompt；关闭后不提炼、不写入，也不注入。</p></div><label class="switch"><input :checked="settings.memory_enabled" type="checkbox" aria-label="启用 Memory" @change="updateSetting({ memory_enabled: !settings?.memory_enabled })" /><span></span></label></header>
+          <form class="editor-card memory-summary-editor" @submit.prevent="saveMemorySummary">
+            <label>摘要内容<textarea v-model="memoryDraft" :disabled="!settings.memory_enabled" rows="9" maxlength="4000" placeholder="例如：用户是一名 Python 开发者，偏好简洁、先给结论的回答。"></textarea></label>
+            <small v-if="memorySummary">{{ sourceLabel(memorySummary.source) }} · {{ new Date(memorySummary.updated_at).toLocaleString() }}</small>
+            <button class="primary-action" type="submit" :disabled="!settings.memory_enabled">保存摘要</button>
+          </form>
+          <div v-if="memoryDraft || memorySummary?.content" class="clear-memory-actions">
+            <button v-if="!clearMemoryArmed" class="danger-outline" @click="clearMemoryArmed = true">清空记忆摘要</button>
+            <template v-else><button class="danger-outline" @click="clearMemorySummary">确认清空</button><button @click="clearMemoryArmed = false">取消</button></template>
           </div>
         </section>
       </template>

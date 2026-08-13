@@ -70,20 +70,25 @@ def upgrade() -> None:
         "VALUES (1, TRUE, TRUE, 'system') ON CONFLICT (id) DO NOTHING"
     )
     op.create_table(
-        "memories",
-        sa.Column("id", UUID, primary_key=True),
-        sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("normalized_key", sa.String(255), nullable=False, unique=True),
-        sa.Column("embedding", Vector(1024), nullable=True),
+        "memory_summaries",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("content", sa.Text(), nullable=False, server_default=""),
         sa.Column("source", sa.String(20), nullable=False, server_default="manual"),
         sa.Column("source_conversation_id", UUID, nullable=True),
         *timestamps(),
         sa.ForeignKeyConstraint(
             ["source_conversation_id"], ["conversations.id"], ondelete="SET NULL"
         ),
+        sa.CheckConstraint("id = 1", name="ck_memory_summaries_singleton"),
     )
-    op.create_index("ix_memories_normalized_key", "memories", ["normalized_key"])
-    op.create_index("ix_memories_source_conversation_id", "memories", ["source_conversation_id"])
+    op.execute(
+        "INSERT INTO memory_summaries (id, content, source) VALUES (1, '', 'manual')"
+    )
+    op.create_index(
+        "ix_memory_summaries_source_conversation_id",
+        "memory_summaries",
+        ["source_conversation_id"],
+    )
 
     op.create_table(
         "files",
@@ -326,7 +331,7 @@ def downgrade() -> None:
     op.drop_table("agent_runs")
     op.drop_table("file_chunks")
     op.drop_table("files")
-    op.drop_table("memories")
+    op.drop_table("memory_summaries")
     op.drop_table("app_settings")
     op.drop_table("skill_snapshots")
     op.drop_table("skills")

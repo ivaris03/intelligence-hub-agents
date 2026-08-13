@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
-from app.memory.service import refine_idle_memories
+from app.memory.service import refine_idle_memory_summary
 
 settings = get_settings()
 
@@ -16,7 +16,7 @@ async def _memory_refinement_loop() -> None:
     while True:
         try:
             async with AsyncSessionLocal() as session:
-                await refine_idle_memories(session, settings)
+                await refine_idle_memory_summary(session)
         except asyncio.CancelledError:
             raise
         except Exception:

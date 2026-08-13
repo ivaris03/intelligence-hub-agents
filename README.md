@@ -8,7 +8,7 @@ Intelligence Hub 是一个面向个人工作区的 ChatGPT 风格 Agent Hub。�
 - 上传 `txt`、`md`、`pdf`、`docx`、`png`、`jpg`、`jpeg`、`webp`；单文件上限 20 MB、单次最多 3 个。文档支持定位、分块、Qwen Embedding 与 PostgreSQL/pgvector 相似度检索，图片走多模态输入。
 - 显式联网请求通过 Tavily Remote MCP 搜索，普通问答不会自动搜索；文件和网页来源均持久化展示。
 - Skill 完整 CRUD、启停、`@Skill`/自动单选和不可变调用快照。
-- Memory 完整 CRUD、总开关、对话“记住/忘记”、相关记忆预算注入，以及闲置 30 分钟后的游标式安全提炼。
+- 单份用户记忆摘要、总开关、对话“记住/忘记”、每轮 System Prompt 注入，以及闲置 30 分钟后的游标式安全提炼。
 - 图片 Agent：LangChain 结构化 `ImageBrief`、参考图、受控 Qwen Image 调用、预览/下载/重试。
 - 演示 Agent：LangGraph 大纲中断确认、LangChain 结构化页面、PPTX 生成、定向修改、版本链和 PostgreSQL 检查点恢复。
 - 研究 Agent：外层 LangGraph、共享搜索/总时长预算、Deep Agents 证据子 Agent、URL/引用复验和 Markdown 产物。
@@ -23,7 +23,7 @@ backend/app/chat/         持久化 Chat 编排
 backend/app/agents/       LangChain / LangGraph / Deep Agents 工作流
 backend/app/files/        文件校验、提取、检索与存储适配
 backend/app/skills/       Skill 选择与快照
-backend/app/memory/       Memory 命令、检索与闲置提炼
+backend/app/memory/       用户记忆摘要、对话命令与闲置提炼
 backend/migrations/       PostgreSQL + pgvector Alembic 迁移
 docs/                     需求、架构、任务和验收记录
 storage/                  本地上传与产物（内容不会提交）

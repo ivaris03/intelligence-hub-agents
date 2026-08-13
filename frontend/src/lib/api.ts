@@ -33,8 +33,8 @@ export type Skill = SkillSummary & {
   updated_at: string
 }
 
-export type MemoryRecord = {
-  id: string
+export type MemorySummary = {
+  id: number
   content: string
   source: 'manual' | 'explicit' | 'automatic'
   source_conversation_id?: string | null
@@ -290,12 +290,10 @@ export const skillsApi = {
   remove: (id: string) => api<void>(`/api/skills/${id}`, { method: 'DELETE' }),
 }
 
-export const memoriesApi = {
-  list: () => api<MemoryRecord[]>('/api/memories'),
-  create: (content: string) => api<MemoryRecord>('/api/memories', jsonInit('POST', { content })),
-  update: (id: string, content: string) => api<MemoryRecord>(`/api/memories/${id}`, jsonInit('PATCH', { content })),
-  remove: (id: string) => api<void>(`/api/memories/${id}`, { method: 'DELETE' }),
-  clear: () => api<void>('/api/memories', { method: 'DELETE' }),
+export const memorySummaryApi = {
+  get: () => api<MemorySummary>('/api/memory-summary'),
+  update: (content: string) => api<MemorySummary>('/api/memory-summary', jsonInit('PUT', { content })),
+  clear: () => api<void>('/api/memory-summary', { method: 'DELETE' }),
 }
 
 export const settingsApi = {

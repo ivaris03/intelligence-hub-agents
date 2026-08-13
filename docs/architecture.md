@@ -49,7 +49,7 @@ flowchart TB
 - 会话与交互：创建、切换、重命名、删除和搜索会话，支持多轮流式对话、停止和重新生成。
 - 上下文增强：上传文件并基于文件问答；在用户明确要求时联网搜索并展示真实来源。
 - Agent 工作台：统一启动图片、演示和研究任务，展示思考内容、工具调用、公开阶段与错误。
-- 个性化：管理 Skill 和 Memory，并在每次请求中按明确规则选择、快照和注入。
+- 个性化：管理 Skill 和用户记忆摘要；每次请求选择并快照 Skill，同时注入完整记忆摘要。
 - 产物管理：将图片、PPTX 和 Markdown 报告绑定到会话与运行，支持刷新后查看和下载。
 
 ### 1.4 核心业务流程
@@ -86,7 +86,7 @@ flowchart TB
 #### 1.4.3 Skill 与 Memory 流程
 
 - Skill：用户显式选择 `@Skill`，或系统从已启用项中选择至多一个；发送时生成不可变快照，后续编辑不影响历史请求。
-- Memory：明确的“记住/忘记”命令立即生效；会话闲置 30 分钟后仅提炼稳定、低风险信息；每轮只注入少量相关记忆。
+- Memory：明确的“记住/忘记”命令立即更新单份用户记忆摘要；会话闲置 30 分钟后仅提炼稳定、低风险信息；每轮将整份摘要注入 System Prompt。
 
 ### 1.5 核心业务对象
 
@@ -96,7 +96,7 @@ flowchart TB
 | 消息 `Message` | 一次用户输入或助手回答 | 属于会话，可关联 Skill 快照 |
 | 文件 `File` | 用户提供的问答资料 | 属于会话，可产生检索片段 |
 | Skill | 可管理、可复用的任务指令 | 请求使用其不可变快照 |
-| Memory | 跨会话复用的稳定信息 | 记录来源，可启停、编辑或删除 |
+| Memory | 跨会话复用的用户记忆摘要 | 记录最近来源，可启停、编辑或清空 |
 | Agent 运行 `AgentRun` | 一次 Work 任务的执行记录 | 属于会话，产生零个或多个产物 |
 | 产物 `Artifact` | 图片、PPTX 或 Markdown 报告 | 属于运行，可形成版本链 |
 
@@ -207,7 +207,7 @@ backend/
 ├── app/chat/           # 普通对话编排
 ├── app/files/          # 解析、分块、检索
 ├── app/skills/         # Skill 管理、选择与快照
-├── app/memory/         # Memory 管理、提炼与检索
+├── app/memory/         # 用户记忆摘要管理、命令与闲置提炼
 ├── app/agents/         # 三个 Agent 与共享运行时
 ├── app/artifacts/      # 产物存储和下载
 ├── app/integrations/   # Qwen、Tavily、存储适配器
@@ -230,7 +230,7 @@ backend/
 - 首轮完成后生成会话标题，并在每条完成回答末尾生成推荐问题。
 - 按标题和消息正文搜索会话，返回命中摘要。
 - 解析显式 `@Skill`，或从启用的 Skill 名称和描述中选择至多一个。
-- 注入与当前请求相关的 Memory，并处理明确的“记住/忘记”命令。
+- 每轮注入完整用户记忆摘要，并处理明确的“记住/忘记”命令。
 
 消息状态保持简单：
 
@@ -271,12 +271,12 @@ Skill Service 提供名称、描述、指令和启停状态的 CRUD。每次请�
 
 #### 2.4.4 Memory Service
 
-Memory Service 管理原子记忆、启停状态、来源和相关性选择：
+Memory Service 管理单份用户记忆摘要、启停状态和最近更新来源：
 
 - 用户明确要求“记住/忘记”时，同步执行变更并返回结果。
 - 会话最后活动满 30 分钟后，应用内周期任务提炼新增内容；应用重启后根据 `last_activity_at` 和提炼游标补扫到期会话。
 - 自动提炼只保存稳定、低风险的偏好和背景；敏感、含糊或冲突内容不自动写入。
-- Chat 和 Work 在固定条数与字符预算内选择相关记忆，作为独立的低优先级上下文注入。
+- Chat 每轮将整份用户记忆摘要作为独立的低优先级 System Prompt 上下文注入；Work 运行也复用同一摘要。
 - Memory 关闭时停止提炼、写入和注入；已有数据保留，删除后立即不再使用。
 
 #### 2.4.5 Agent Runtime
@@ -365,7 +365,7 @@ Deep Agents：研究规划 -> 搜索与提取 -> 必要的固定子 Agent 委派
 | `tool_calls` | `id`、`message_id`、`run_id`、`tool_name`、`input_summary`、`output_summary`、`status`、`duration_ms` |
 | `skills` | `id`、`name`、`description`、`instructions`、`enabled`、`updated_at` |
 | `skill_snapshots` | `id`、`skill_id`、`name`、`description`、`instructions`、`content_hash` |
-| `memories` | `id`、`content`、`normalized_key`、`embedding`、`source_conversation_id`、`created_at`、`updated_at` |
+| `memory_summaries` | 固定 `id=1`、`content`、`source`、`source_conversation_id`、`created_at`、`updated_at` |
 | `app_settings` | `memory_enabled`、`web_search_enabled`、外观设置 |
 | `files` | `id`、`conversation_id`、`name`、`mime_type`、`kind`、`storage_key`、`status`、`created_at` |
 | `file_chunks` | `id`、`file_id`、`content`、`locator`、`embedding` |
@@ -397,11 +397,9 @@ POST   /api/skills
 PATCH  /api/skills/{id}
 DELETE /api/skills/{id}
 
-GET    /api/memories
-POST   /api/memories
-PATCH  /api/memories/{id}
-DELETE /api/memories/{id}
-DELETE /api/memories
+GET    /api/memory-summary
+PUT    /api/memory-summary
+DELETE /api/memory-summary
 PATCH  /api/settings/memory
 
 POST   /api/files
@@ -472,7 +470,7 @@ STORAGE_PATH
 MVP 测试重点：
 
 - 单元测试：模式校验、消息状态、事件排序、工具摘要脱敏、标题保护、推荐问题置底、会话搜索、Skill 选择与快照、Memory 冲突和启停、文档/图片分流与内容校验、请求文件关联、Agent 状态转换、参考图权限、图片工具与迭代限制、演示意图路由和检查点恢复、研究预算与引用校验。
-- 集成测试：模型与 Tavily 使用 mock；验证数据库、向量检索、文件存储、闲置记忆提炼和相关记忆注入；验证 Deep Agents 的主 Agent 与固定子 Agent 共用搜索预算且不能直接写业务数据库或 Artifact。
+- 集成测试：模型与 Tavily 使用 mock；验证数据库、向量检索、文件存储、闲置记忆提炼和用户记忆摘要注入；验证 Deep Agents 的主 Agent 与固定子 Agent 共用搜索预算且不能直接写业务数据库或 Artifact。
 - 端到端测试：覆盖需求文档中的十四个验收场景。
 - 人工检查：图片可查看；PPTX 可打开、定向修改不覆盖原版本且中断后可恢复；研究链接可访问。
 
@@ -500,5 +498,5 @@ MVP 测试重点：
 | 向量存储 | pgvector | 与主数据库合并，减少服务数量 |
 | 长任务 | 进程内后台执行；演示阶段持久化 | 简化部署，同时支持 PPT 修改与手动恢复 |
 | Skill | 数据库正文 + 请求级快照 | 管理简单，并保证历史调用可追溯 |
-| Memory | 原子条目 + 30 分钟闲置提炼 | 兼顾可管理性、上下文成本与自动积累 |
+| Memory | 单份用户摘要 + 30 分钟闲置提炼 + 每轮完整注入 | 实现简单，保证每轮个性化上下文一致 |
 | 用户模型 | 单用户 | 符合个人项目定位 |

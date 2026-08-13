@@ -107,7 +107,7 @@ RAG_EXAMPLES = [
             "case_id": "rag-memory-safety",
             "query": "Memory 会不会自动保存密码？关闭以后还会提炼或注入吗？",
             "documents": _documents(
-                ("memory-crud", "Memory 支持查看、新增、编辑、删除和清空。"),
+                ("memory-summary", "Memory 只保存一份用户记忆摘要，支持查看、编辑和清空。"),
                 ("memory-toggle", "Memory 默认开启；关闭后不提炼、不写入，也不向模型注入记忆。"),
                 ("memory-sensitive", "系统不自动保存密码、密钥、支付信息或其他高敏感内容。"),
                 ("memory-idle", "会话闲置 30 分钟后可以提炼稳定、低风险的偏好。"),
@@ -135,7 +135,7 @@ RAG_EXAMPLES = [
                 ("upload-bytes", "MAX_UPLOAD_BYTES 的默认值是 20971520。"),
                 ("image-pixels", "MAX_IMAGE_PIXELS 默认限制为 24000000 像素。"),
                 ("recent-messages", "RECENT_MESSAGE_LIMIT 默认取最近 12 条消息。"),
-                ("memory-items", "MEMORY_MAX_ITEMS 默认最多注入 5 条记忆。"),
+                ("memory-summary", "每轮对话将整份用户记忆摘要注入 System Prompt。"),
                 ("slides-pages", "SLIDES_MAX_PAGES 默认最多 15 页。"),
                 ("thinking", "QWEN_THINKING_BUDGET 默认是 1024 tokens。"),
                 ("chunks", "DOCUMENT_CHUNK_CHARS 默认是 1200，重叠 150 字符。"),
@@ -246,9 +246,9 @@ _RAG_FACTS = [
     ),
     (
         "memory-budget",
-        "默认最多注入几条 Memory，总字符预算是多少？",
-        "MEMORY_MAX_ITEMS 默认是 5，MEMORY_CONTEXT_CHARS 默认是 1500。",
-        "最多 5 条，总预算 1500 字符。",
+        "Memory 在每轮对话中如何注入？",
+        "系统每轮将唯一的用户记忆摘要完整注入 System Prompt。",
+        "整份用户记忆摘要会在每轮注入 System Prompt。",
         False,
     ),
     (

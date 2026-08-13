@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -186,15 +187,12 @@ class AppSettings(Base):
     )
 
 
-class Memory(Base):
-    __tablename__ = "memories"
+class MemorySummary(Base):
+    __tablename__ = "memory_summaries"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_memory_summaries_singleton"),)
 
-    id: Mapped[UUID] = uuid_pk_column()
-    content: Mapped[str] = mapped_column(Text)
-    normalized_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(1024).with_variant(JSON(), "sqlite")
-    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    content: Mapped[str] = mapped_column(Text, default="")
     source: Mapped[str] = mapped_column(String(20), default="manual")
     source_conversation_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), index=True

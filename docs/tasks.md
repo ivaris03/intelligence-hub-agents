@@ -55,17 +55,17 @@
 | SKILL-02 | Skill 设置页面 | 名称、描述、指令可管理；名称重复有提示 | SKILL-01/FND-06 |
 | SKILL-03 | `@Skill` 与自然语言选择 | 显式选择优先；自动选择至多一个且服务端复验 | SKILL-01/CHAT-02 |
 | SKILL-04 | Skill 快照与调用展示 | 完整指令仅选中后加载；消息显示所用 Skill，历史不受后续编辑影响 | SKILL-03 |
-| MEMORY-01 | Memory 数据模型、CRUD 与总开关 | 默认开启；可增删改查、清空和启停，记录来源与更新时间 | FND-02 |
-| MEMORY-02 | Memory 设置页面 | 可查看、编辑、删除、清空和启停 | MEMORY-01/FND-06 |
+| MEMORY-01 | 用户记忆摘要模型与总开关 | 默认开启；只保存一份摘要，可查看、编辑、清空和启停，记录最近来源与更新时间 | FND-02 |
+| MEMORY-02 | Memory 设置页面 | 可查看、编辑、清空和启停用户记忆摘要 | MEMORY-01/FND-06 |
 | MEMORY-03 | 对话“记住/忘记” | 明确命令立即执行并显示与数据库一致的回执 | MEMORY-01/CHAT-02 |
 | MEMORY-04 | 闲置 30 分钟自动提炼 | 使用游标避免重复；敏感、含糊和冲突内容不自动写入 | MEMORY-01/03 |
-| MEMORY-05 | 相关 Memory 注入 | Chat 和 Work 在固定预算内使用相关记忆；关闭或删除后立即失效 | MEMORY-01/CHAT-02 |
+| MEMORY-05 | 用户记忆摘要注入 | Chat 每轮将整份摘要注入 System Prompt，Work 复用同一摘要；关闭或清空后立即失效 | MEMORY-01/CHAT-02 |
 
 ### M2：Agent Hub
 
 | ID | 任务 | 验收 | 依赖 |
 | --- | --- | --- | --- |
-| RUN-01 | 框架无关的 `agent_runs`、阶段事件和通用运行 UI | LangChain、LangGraph 和 Deep Agents 实现可通过统一接口启动；所选 Skill、相关 Memory、思考、工具调用和公开阶段按序展示，刷新后可恢复业务状态 | CHAT-04/05/SKILL-04/MEMORY-05/FND-05 |
+| RUN-01 | 框架无关的 `agent_runs`、阶段事件和通用运行 UI | LangChain、LangGraph 和 Deep Agents 实现可通过统一接口启动；所选 Skill、用户记忆摘要、思考、工具调用和公开阶段按序展示，刷新后可恢复业务状态 | CHAT-04/05/SKILL-04/MEMORY-05/FND-05 |
 | RUN-02 | Artifact Service | 图片、PPTX、Markdown 可登记和下载 | FILE-01/RUN-01 |
 | IMG-01 | LangChain 图片 Agent 工作流 | 可读取当前运行关联的参考图，生成结构化 `ImageBrief`，通过受控图片工具和有限迭代完成生成并保存结果；不依赖 LangGraph 检查点 | FILE-03/05/RUN-01/02 |
 | IMG-02 | 图片结果 UI | 可预览、下载和重试 | IMG-01 |

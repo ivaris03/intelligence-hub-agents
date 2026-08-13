@@ -63,6 +63,33 @@ def create_conversation(client: TestClient, mode: str = "chat") -> str:
     return response.json()["id"]
 
 
+def test_single_memory_summary_api_and_commands(mvp_client: TestClient) -> None:
+    initial = mvp_client.get("/api/memory-summary")
+    assert initial.status_code == 200
+    assert initial.json()["id"] == 1
+    assert initial.json()["content"] == ""
+
+    updated = mvp_client.put(
+        "/api/memory-summary", json={"content": "用户正在开发 Intelligence Hub。"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["content"] == "用户正在开发 Intelligence Hub。"
+
+    conversation_id = create_conversation(mvp_client)
+    remembered = mvp_client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"content": "请记住我常用 Python", "mode": "chat"},
+    )
+    assert "event: memory.updated" in remembered.text
+    summary = mvp_client.get("/api/memory-summary").json()
+    assert summary["id"] == 1
+    assert summary["content"] == "用户正在开发 Intelligence Hub；我常用 Python。"
+
+    cleared = mvp_client.delete("/api/memory-summary")
+    assert cleared.status_code == 204
+    assert mvp_client.get("/api/memory-summary").json()["content"] == ""
+
+
 def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestClient) -> None:
     conversation_id = create_conversation(mvp_client)
     renamed = mvp_client.patch(
@@ -92,7 +119,7 @@ def test_persistent_chat_files_skill_memory_and_regeneration(mvp_client: TestCli
         json={"content": "你好，请记住我偏好简洁回答", "mode": "chat"},
     )
     assert "event: memory.updated" in memory_stream.text
-    assert mvp_client.get("/api/memories").json()[0]["content"] == "我偏好简洁回答"
+    assert mvp_client.get("/api/memory-summary").json()["content"] == "我偏好简洁回答。"
 
     response = mvp_client.post(
         f"/api/conversations/{conversation_id}/messages",

@@ -154,18 +154,14 @@ class SkillOut(BaseModel):
     updated_at: datetime
 
 
-class MemoryCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=500)
+class MemorySummaryUpdate(BaseModel):
+    content: str = Field(max_length=4_000)
 
 
-class MemoryPatch(BaseModel):
-    content: str = Field(min_length=1, max_length=500)
-
-
-class MemoryOut(BaseModel):
+class MemorySummaryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
+    id: int
     content: str
     source: str
     source_conversation_id: UUID | None
