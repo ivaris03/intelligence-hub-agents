@@ -25,14 +25,23 @@ from app.api.schemas import MessageRequest
 from app.chat.service import should_search_web
 from app.core.config import Settings
 from app.core.security import contains_sensitive_memory, redact, remove_unverified_urls
-from app.db.base import AppSettings, Base, Conversation, MemorySummary, Message, User
+from app.db.base import (
+    AppSettings,
+    Base,
+    Conversation,
+    MemorySummary,
+    Message,
+    PendingMemoryConversation,
+    User,
+)
 from app.files.service import FileValidationError, validate_upload
 from app.integrations.qwen import QwenAdapter
 from app.integrations.tavily import SearchResult, TavilyAdapter
 from app.memory.service import (
     _fallback_memory_chat,
     parse_memory_command,
-    refine_idle_memory_summary,
+    process_due_memory_conversations,
+    queue_idle_memory_conversations,
     refine_pending_memory_summary,
 )
 from app.skills.service import normalize_skill_name
@@ -62,6 +71,15 @@ def test_thinking_effort_is_validated_and_forwarded_to_qwen() -> None:
     }
     high_adapter = QwenAdapter(settings.with_thinking_effort("high"))
     assert high_adapter.chat_model().extra_body == {"reasoning_effort": "high"}
+
+
+def test_memory_schedule_settings_are_validated() -> None:
+    assert Settings().memory_idle_hours == 6
+    assert Settings().memory_batch_timezone == "Asia/Shanghai"
+    with pytest.raises(ValidationError):
+        Settings(memory_idle_hours=0)
+    with pytest.raises(ValidationError):
+        Settings(memory_batch_timezone="Not/A-Timezone")
 
 
 def test_search_requires_explicit_language() -> None:
@@ -260,7 +278,7 @@ def test_tavily_normalizes_nested_mcp_content() -> None:
     }
 
 
-def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() -> None:
+def test_idle_memory_queue_waits_six_hours_and_processes_at_local_midnight() -> None:
     async def scenario() -> None:
         engine = create_async_engine("sqlite+aiosqlite://")
         sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -278,7 +296,7 @@ def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() ->
             session.add(user)
             await session.flush()
             conversation = Conversation(
-                user_id=user.id, last_activity_at=now - timedelta(minutes=31)
+                user_id=user.id, last_activity_at=now - timedelta(hours=6)
             )
             session.add(conversation)
             await session.flush()
@@ -288,52 +306,145 @@ def test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable() ->
                     role="user",
                     content="我偏好简洁回答",
                     status="completed",
-                    created_at=now - timedelta(minutes=32),
+                    created_at=now - timedelta(hours=6, minutes=1),
                 )
             )
             await session.commit()
-            assert await refine_idle_memory_summary(session, now=now) == 1
-            assert await refine_idle_memory_summary(session, now=now) == 0
-            saved = list((await session.scalars(select(MemorySummary))).all())
-            assert len(saved) == 1
-            assert saved[0].content == "我偏好简洁回答。"
+            assert await queue_idle_memory_conversations(
+                session,
+                now=now - timedelta(seconds=1),
+                idle_hours=6,
+                timezone_name="Asia/Shanghai",
+            ) == 0
+            assert await queue_idle_memory_conversations(
+                session,
+                now=now,
+                idle_hours=6,
+                timezone_name="Asia/Shanghai",
+            ) == 1
+            pending = await session.scalar(select(PendingMemoryConversation))
+            assert pending is not None
+            assert pending.through_at.replace(tzinfo=UTC) == conversation.last_activity_at
+            assert pending.process_after.replace(tzinfo=UTC) > now
 
-            second = Conversation(
-                user_id=user.id, last_activity_at=now - timedelta(minutes=31)
+            before_midnight = await process_due_memory_conversations(
+                session,
+                now=pending.process_after.replace(tzinfo=UTC) - timedelta(seconds=1),
             )
-            session.add(second)
-            await session.flush()
-            session.add(
-                Message(
-                    conversation_id=second.id,
-                    role="user",
-                    content="我偏好详细回答",
-                    status="completed",
-                    created_at=now - timedelta(minutes=32),
-                )
+            assert before_midnight.processed_messages == 0
+            due = await process_due_memory_conversations(
+                session, now=pending.process_after.replace(tzinfo=UTC)
             )
-            await session.commit()
-            assert await refine_idle_memory_summary(session, now=now) == 0
+            assert due.added_facts == 1
+            assert due.processed_messages == 1
+            summary = await session.scalar(select(MemorySummary))
+            assert summary is not None
+            assert summary.content == "我偏好简洁回答。"
+            assert await session.scalar(select(PendingMemoryConversation)) is None
 
             stored_settings = await session.get(AppSettings, 1)
             assert stored_settings is not None
             stored_settings.memory_enabled = False
-            third = Conversation(
-                user_id=user.id, last_activity_at=now - timedelta(minutes=31)
+            disabled = Conversation(
+                user_id=user.id, last_activity_at=now - timedelta(hours=7)
             )
-            session.add(third)
+            session.add(disabled)
+            await session.commit()
+            assert await queue_idle_memory_conversations(
+                session,
+                now=now,
+                idle_hours=6,
+                timezone_name="Asia/Shanghai",
+            ) == 0
+        await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_nightly_memory_queue_uses_snapshot_and_batches_per_user() -> None:
+    async def scenario() -> None:
+        engine = create_async_engine("sqlite+aiosqlite://")
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        now = datetime.now(UTC).replace(microsecond=0)
+        async with sessions() as session:
+            user = User(
+                phone="13700000002",
+                password_hash="unused",
+                display_name="测试用户",
+                role="member",
+                is_active=True,
+            )
+            session.add(user)
             await session.flush()
+            conversations = [
+                Conversation(
+                    user_id=user.id,
+                    last_activity_at=now - timedelta(hours=7, minutes=index),
+                )
+                for index in (1, 2)
+            ]
+            session.add_all(conversations)
+            await session.flush()
+            session.add_all(
+                [
+                    Message(
+                        conversation_id=conversations[0].id,
+                        role="user",
+                        content="我常用 Python",
+                        status="completed",
+                        created_at=conversations[0].last_activity_at,
+                    ),
+                    Message(
+                        conversation_id=conversations[1].id,
+                        role="user",
+                        content="我居住在上海",
+                        status="completed",
+                        created_at=conversations[1].last_activity_at,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            assert await queue_idle_memory_conversations(
+                session,
+                now=now,
+                idle_hours=6,
+                timezone_name="Asia/Shanghai",
+            ) == 2
+            pending = list(
+                (await session.scalars(select(PendingMemoryConversation))).all()
+            )
+            process_after = max(
+                item.process_after.replace(tzinfo=UTC) for item in pending
+            )
+
+            conversations[0].last_activity_at = now
             session.add(
                 Message(
-                    conversation_id=third.id,
+                    conversation_id=conversations[0].id,
                     role="user",
-                    content="我常用 Python",
+                    content="我喜欢新消息",
                     status="completed",
-                    created_at=now - timedelta(minutes=32),
+                    created_at=now,
                 )
             )
             await session.commit()
-            assert await refine_idle_memory_summary(session, now=now) == 0
+
+            result = await process_due_memory_conversations(
+                session, now=process_after
+            )
+            assert result.processed_messages == 2
+            assert result.added_facts == 2
+            summary = await session.scalar(select(MemorySummary))
+            assert summary is not None
+            assert "我常用 Python" in summary.content
+            assert "我居住在上海" in summary.content
+            assert "我喜欢新消息" not in summary.content
+            assert conversations[0].memory_cursor.replace(
+                tzinfo=UTC
+            ) < conversations[0].last_activity_at
         await engine.dispose()
 
     asyncio.run(scenario())

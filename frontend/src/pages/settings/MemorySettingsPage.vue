@@ -143,7 +143,7 @@ function sourceLabel(source: MemorySummary['source']) {
   <p v-if="loading" class="loading-state"><span></span>读取设置…</p>
 
   <section v-if="settings" class="settings-section">
-    <header><div><span class="section-kicker">MEMORY</span><h2>用户记忆摘要</h2><p>每次对话都会将整份摘要注入 System Prompt；关闭后不提炼、不写入，也不注入。</p></div><label class="switch"><input :checked="settings.memory_enabled" type="checkbox" aria-label="启用 Memory" @change="toggleMemory" /><span></span></label></header>
+    <header><div><span class="section-kicker">MEMORY</span><h2>用户记忆摘要</h2><p>会话闲置 6 小时后进入待处理队列，并在每天午夜统一更新；关闭后不入队、不写入，也不注入。</p></div><label class="switch"><input :checked="settings.memory_enabled" type="checkbox" aria-label="启用 Memory" @change="toggleMemory" /><span></span></label></header>
     <div class="memory-workspace">
       <form class="editor-card memory-summary-editor" @submit.prevent="saveMemorySummary">
         <header>

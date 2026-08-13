@@ -82,6 +82,14 @@ CREATE TABLE memory_chat_messages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE pending_memory_conversations (
+    conversation_id UUID PRIMARY KEY REFERENCES conversations (id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    through_at TIMESTAMPTZ NOT NULL,
+    process_after TIMESTAMPTZ NOT NULL,
+    queued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE files (
     id UUID PRIMARY KEY,
     conversation_id UUID NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
@@ -247,6 +255,10 @@ CREATE INDEX ix_memory_chat_messages_user_id
     ON memory_chat_messages (user_id);
 CREATE INDEX ix_memory_chat_messages_created_at
     ON memory_chat_messages (created_at);
+CREATE INDEX ix_pending_memory_conversations_user_id
+    ON pending_memory_conversations (user_id);
+CREATE INDEX ix_pending_memory_conversations_process_after
+    ON pending_memory_conversations (process_after);
 CREATE INDEX ix_files_conversation_id ON files (conversation_id);
 CREATE INDEX ix_files_created_at ON files (created_at);
 CREATE INDEX ix_file_chunks_file_id ON file_chunks (file_id);

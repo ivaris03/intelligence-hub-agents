@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import current_user_id
@@ -20,7 +21,7 @@ from app.db.base import (
     MemoryChatMessage,
     MemorySummary,
     Message,
-    User,
+    PendingMemoryConversation,
 )
 from app.integrations.qwen import QwenAdapter
 
@@ -398,27 +399,12 @@ async def _refine_user_memory_summary(
     session: AsyncSession,
     user_id: UUID,
     *,
-    cutoff: datetime | None,
+    conversation_limits: list[tuple[Conversation, datetime]],
+    clear_queue: bool,
 ) -> MemoryRefinementResult:
     app_settings = await get_app_settings(session, user_id)
     if not app_settings.memory_enabled:
         return MemoryRefinementResult(0, 0)
-    conditions = [
-        Conversation.user_id == user_id,
-        or_(
-            Conversation.memory_cursor.is_(None),
-            Conversation.memory_cursor < Conversation.last_activity_at,
-        ),
-    ]
-    if cutoff is not None:
-        conditions.append(Conversation.last_activity_at <= cutoff)
-    conversations = list(
-        (
-            await session.scalars(
-                select(Conversation).where(*conditions).order_by(Conversation.created_at)
-            )
-        ).all()
-    )
     summary = await get_memory_summary_record(session, user_id)
     facts = _summary_facts(summary.content)
     signatures = {_subject_signature(fact) for fact in facts}
@@ -426,11 +412,11 @@ async def _refine_user_memory_summary(
     processed_messages = 0
     last_source_conversation_id: UUID | None = None
 
-    for conversation in conversations:
+    for conversation, through_at in conversation_limits:
         query = select(Message).where(
             Message.conversation_id == conversation.id,
             Message.role == "user",
-            Message.created_at <= conversation.last_activity_at,
+            Message.created_at <= through_at,
         )
         if conversation.memory_cursor:
             query = query.where(Message.created_at > conversation.memory_cursor)
@@ -459,12 +445,22 @@ async def _refine_user_memory_summary(
             signatures.add(signature)
             written += 1
             last_source_conversation_id = conversation.id
-        conversation.memory_cursor = conversation.last_activity_at
+        conversation.memory_cursor = through_at
 
     if written:
         summary.content = _compose_summary(facts)
         summary.source = "automatic"
         summary.source_conversation_id = last_source_conversation_id
+    if clear_queue:
+        queued = (
+            await session.scalars(
+                select(PendingMemoryConversation).where(
+                    PendingMemoryConversation.user_id == user_id
+                )
+            )
+        ).all()
+        for item in queued:
+            await session.delete(item)
     await session.commit()
     return MemoryRefinementResult(written, processed_messages)
 
@@ -472,30 +468,152 @@ async def _refine_user_memory_summary(
 async def refine_pending_memory_summary(
     session: AsyncSession, user_id: UUID | None = None
 ) -> MemoryRefinementResult:
-    return await _refine_user_memory_summary(
-        session, user_id or current_user_id(), cutoff=None
-    )
-
-
-async def refine_idle_memory_summary(
-    session: AsyncSession, now: datetime | None = None, user_id: UUID | None = None
-) -> int:
-    if user_id is None:
-        user_ids = (
-            await session.scalars(select(User.id).where(User.is_active.is_(True)))
-        ).all()
-        written = 0
-        cutoff = (now or datetime.now(UTC)) - timedelta(minutes=30)
-        for owner_id in user_ids:
-            result = await _refine_user_memory_summary(
-                session, owner_id, cutoff=cutoff
+    owner_id = user_id or current_user_id()
+    conversations = list(
+        (
+            await session.scalars(
+                select(Conversation)
+                .where(Conversation.user_id == owner_id)
+                .order_by(Conversation.created_at)
             )
-            written += result.added_facts
-        return written
-
-    result = await _refine_user_memory_summary(
-        session,
-        user_id,
-        cutoff=(now or datetime.now(UTC)) - timedelta(minutes=30),
+        ).all()
     )
-    return result.added_facts
+    limits = [
+        (conversation, conversation.last_activity_at)
+        for conversation in conversations
+        if conversation.memory_cursor is None
+        or conversation.memory_cursor < conversation.last_activity_at
+    ]
+    return await _refine_user_memory_summary(
+        session, owner_id, conversation_limits=limits, clear_queue=True
+    )
+
+
+def _nightly_process_after(
+    through_at: datetime, *, idle_hours: int, timezone_name: str
+) -> datetime:
+    timezone = ZoneInfo(timezone_name)
+    eligible_local = (through_at + timedelta(hours=idle_hours)).astimezone(timezone)
+    midnight = datetime.combine(eligible_local.date(), time.min, timezone)
+    if eligible_local > midnight:
+        midnight += timedelta(days=1)
+    return midnight.astimezone(UTC)
+
+
+async def queue_idle_memory_conversations(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    idle_hours: int = 6,
+    timezone_name: str = "Asia/Shanghai",
+    user_id: UUID | None = None,
+) -> int:
+    current = now or datetime.now(UTC)
+    cutoff = current - timedelta(hours=idle_hours)
+    query = select(Conversation).where(Conversation.last_activity_at <= cutoff)
+    if user_id is not None:
+        query = query.where(Conversation.user_id == user_id)
+    conversations = list((await session.scalars(query)).all())
+    queued_conversation_ids = set(
+        (
+            await session.scalars(
+                select(PendingMemoryConversation.conversation_id).where(
+                    PendingMemoryConversation.conversation_id.in_(
+                        [conversation.id for conversation in conversations]
+                    )
+                )
+            )
+        ).all()
+        if conversations
+        else []
+    )
+    enabled_user_ids: set[UUID] = set()
+    for owner_id in dict.fromkeys(
+        conversation.user_id for conversation in conversations
+    ):
+        if (await get_app_settings(session, owner_id)).memory_enabled:
+            enabled_user_ids.add(owner_id)
+    queued = 0
+    for conversation in conversations:
+        if conversation.user_id not in enabled_user_ids:
+            continue
+        if conversation.id in queued_conversation_ids:
+            continue
+        if (
+            conversation.memory_cursor is not None
+            and conversation.memory_cursor >= conversation.last_activity_at
+        ):
+            continue
+        session.add(
+            PendingMemoryConversation(
+                conversation_id=conversation.id,
+                user_id=conversation.user_id,
+                through_at=conversation.last_activity_at,
+                process_after=_nightly_process_after(
+                    conversation.last_activity_at,
+                    idle_hours=idle_hours,
+                    timezone_name=timezone_name,
+                ),
+            )
+        )
+        queued += 1
+    await session.commit()
+    return queued
+
+
+async def process_due_memory_conversations(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+    user_id: UUID | None = None,
+) -> MemoryRefinementResult:
+    current = now or datetime.now(UTC)
+    query = select(PendingMemoryConversation).where(
+        PendingMemoryConversation.process_after <= current
+    )
+    if user_id is not None:
+        query = query.where(PendingMemoryConversation.user_id == user_id)
+    pending = list(
+        (
+            await session.scalars(
+                query.order_by(
+                    PendingMemoryConversation.user_id,
+                    PendingMemoryConversation.queued_at,
+                )
+            )
+        ).all()
+    )
+    totals = MemoryRefinementResult(0, 0)
+    for owner_id in dict.fromkeys(item.user_id for item in pending):
+        if not (await get_app_settings(session, owner_id)).memory_enabled:
+            continue
+        user_pending = [item for item in pending if item.user_id == owner_id]
+        conversations = {
+            conversation.id: conversation
+            for conversation in (
+                await session.scalars(
+                    select(Conversation).where(
+                        Conversation.id.in_(
+                            [item.conversation_id for item in user_pending]
+                        )
+                    )
+                )
+            ).all()
+        }
+        limits = [
+            (conversations[item.conversation_id], item.through_at)
+            for item in user_pending
+            if item.conversation_id in conversations
+        ]
+        result = await _refine_user_memory_summary(
+            session,
+            owner_id,
+            conversation_limits=limits,
+            clear_queue=False,
+        )
+        totals.added_facts += result.added_facts
+        totals.processed_messages += result.processed_messages
+        for item in user_pending:
+            await session.delete(item)
+        await session.commit()
+    return totals

@@ -27,7 +27,7 @@
 | 11 | 自动标题、搜索和推荐问题 | 集成测试检查搜索摘要、标题事件与 `follow_up.finalized` | 首轮自动标题；推荐问题恰好一个且点击只填入；侧栏搜索可跳转 | 通过 |
 | 12 | Skill 选择、快照与停用 | 显式 Skill、自动至多一个和不可变快照集成路径 | 设置页 CRUD/启停，输入区只列已启用 Skill，消息/运行显示快照名称 | 通过 |
 | 13 | 用户记忆摘要与记住/忘记 | 显式命令数据库回执、完整摘要注入、单摘要读写/开关路径 | 设置页编辑唯一摘要；“请记住”立即显示回执并更新摘要 | 通过 |
-| 14 | 闲置提炼、游标与总开关 | `test_idle_memory_summary_refinement_is_cursor_based_safe_and_switchable` 覆盖 30 分钟、去重游标、冲突拒绝和关闭开关 | Memory 开关关闭时输入禁用，重新开启立即恢复 | 通过 |
+| 14 | 闲置队列、午夜提炼、游标与总开关 | `test_idle_memory_queue_waits_six_hours_and_processes_at_local_midnight` 与 `test_nightly_memory_queue_uses_snapshot_and_batches_per_user` 覆盖 6 小时入队、本地午夜、队列快照、按用户批量消费、去重游标和关闭开关 | Memory 开关关闭时输入禁用，重新开启立即恢复 | 通过 |
 
 ## 真实在线服务复验结果
 

@@ -253,6 +253,22 @@ class MemoryChatMessage(Base):
     )
 
 
+class PendingMemoryConversation(Base):
+    __tablename__ = "pending_memory_conversations"
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    process_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class StoredFile(Base):
     __tablename__ = "files"
 

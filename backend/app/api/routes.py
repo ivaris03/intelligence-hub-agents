@@ -82,7 +82,8 @@ from app.memory.service import (
     get_app_settings,
     get_memory_summary_record,
     list_memory_chat_messages,
-    refine_idle_memory_summary,
+    process_due_memory_conversations,
+    queue_idle_memory_conversations,
     refine_pending_memory_summary,
 )
 from app.skills.service import normalize_skill_name
@@ -679,9 +680,16 @@ async def refine_pending_memory(
 
 @router.post("/maintenance/memory-summary/refine")
 async def refine_memory_summary(
-    session: SessionDep, user: CurrentUserDep
+    session: SessionDep, settings: SettingsDep, user: CurrentUserDep
 ) -> dict[str, int]:
-    return {"added_facts": await refine_idle_memory_summary(session, user_id=user.id)}
+    queued = await queue_idle_memory_conversations(
+        session,
+        idle_hours=settings.memory_idle_hours,
+        timezone_name=settings.memory_batch_timezone,
+        user_id=user.id,
+    )
+    result = await process_due_memory_conversations(session, user_id=user.id)
+    return {"queued": queued, "added_facts": result.added_facts}
 
 
 @router.get("/settings", response_model=AppSettingsOut)

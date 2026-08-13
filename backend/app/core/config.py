@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -65,6 +66,8 @@ class Settings(BaseSettings):
     document_chunk_chars: int = 1_200
     document_chunk_overlap: int = 150
     recent_message_limit: int = 12
+    memory_idle_hours: int = Field(default=6, ge=1)
+    memory_batch_timezone: str = "Asia/Shanghai"
     research_max_searches: int = 4
     research_timeout_seconds: int = 120
     slides_max_pages: int = 15
@@ -73,6 +76,10 @@ class Settings(BaseSettings):
     def validate_production_secrets(self):
         if self.app_env == "production" and self.auth_secret_key.startswith("change-me"):
             raise ValueError("生产环境必须配置 AUTH_SECRET_KEY")
+        try:
+            ZoneInfo(self.memory_batch_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("MEMORY_BATCH_TIMEZONE 必须是有效的 IANA 时区") from exc
         return self
 
     @property

@@ -10,7 +10,7 @@ Work 模式的目标是完成一项任务并产出一个可查看、可下载的
 - 上传 `txt`、`md`、`pdf`、`docx`、`png`、`jpg`、`jpeg`、`webp`；单文件上限 20 MB、单次最多 3 个。文档支持定位、分块、Qwen Embedding 与 PostgreSQL/pgvector 相似度检索，图片走多模态输入。
 - 显式联网请求通过 Tavily Remote MCP 搜索，普通问答不会自动搜索；文件和网页来源均持久化展示。
 - Skill 完整 CRUD、启停、选择器显式调用、任务自动匹配和不可变调用快照；Chat 与 Work 均支持多选 Skill。
-- 单份用户记忆摘要、专用记忆对话、自然语言纠正与增删、手动处理尚未提炼的对话消息、总开关、每轮 System Prompt 注入，以及闲置 30 分钟后的游标式安全提炼。
+- 单份用户记忆摘要、专用记忆对话、自然语言纠正与增删、手动处理尚未提炼的对话消息、总开关、每轮 System Prompt 注入，以及会话闲置 6 小时入队、用户本地午夜统一执行的游标式安全提炼。
 - 图片 Agent：LangChain 结构化 `ImageBrief`、参考图、受控 Qwen Image 调用、预览/下载/重试。
 - 演示 Agent：LangGraph 大纲中断确认、LangChain 结构化页面、PPTX 生成、定向修改、版本链和 PostgreSQL 检查点恢复。
 - 研究 Agent：外层 LangGraph、共享搜索/总时长预算、Deep Agents 证据子 Agent、URL/引用复验和 Markdown 产物。
@@ -98,6 +98,7 @@ Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空�
 | `RESEARCH_MAX_SEARCHES` | 单次研究共享搜索预算，默认 4 |
 | `RESEARCH_TIMEOUT_SECONDS` | 研究外层总超时，默认 120 秒 |
 | `MAX_UPLOAD_BYTES` / `MAX_IMAGE_PIXELS` | 上传字节和图片像素上限 |
+| `MEMORY_IDLE_HOURS` / `MEMORY_BATCH_TIMEZONE` | 会话进入记忆待处理队列的闲置时长，以及每日午夜批处理使用的用户时区；默认 `6` 和 `Asia/Shanghai` |
 
 未配置 `DASHSCOPE_API_KEY` 时，Chat 与图片 Agent 使用确定性的本地演示输出，演示 Agent 仍会生成有效 PPTX。未配置 Tavily 时，联网 Chat 会明确显示工具失败，研究 Agent 会输出“待配置”报告，不会编造来源。配置凭据后会启用真实 Qwen 与 Tavily 链路。
 
@@ -108,7 +109,7 @@ Alembic 是数据库结构的唯一日常升级入口。`sql/schema.sql` 是空�
 1. 在 Chat 中连续提问；点击回答末尾的推荐问题只会填充输入框。
 2. 用输入框左下角的 `＋` 上传或选择文件；发送后，本轮使用的文件和定位会保留在消息中。
 3. 只有明确写出“联网搜索/上网查找/search the web”等请求时才调用 Tavily。
-4. 在设置页管理 Skill、Memory、联网开关和外观；Memory 页可直接和摘要对话并纠正旧记忆，也可点击“更新记忆”立即处理尚未用于摘要的对话消息；在 Chat 中仍可说“请记住……”或“请忘记……”。
+4. 在设置页管理 Skill、Memory、联网开关和外观；Memory 页可直接和摘要对话并纠正旧记忆，也可点击“更新记忆”立即处理尚未用于摘要的对话消息。未手动处理的会话在闲置 6 小时后进入待处理队列，并在用户本地午夜统一更新；在 Chat 中仍可说“请记住……”或“请忘记……”。
 5. 新建会话时先选择 Chat 或 Work；选择模式不会立即落库，发送第一句话后才以该内容命名并创建会话。创建后类型不可切换；两种会话统一显示在侧栏，但不共用历史、文件或上下文。Work 会话中选择 Agent 来完成任务，目标是产出一个 Artifact，例如图片、研究报告或 PPT/PPTX 演示文稿。
 6. 失败或取消的运行可在卡片中重试；演示运行从最近检查点恢复，已登记产物不会重复创建。
 
