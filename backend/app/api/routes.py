@@ -37,6 +37,10 @@ from app.api.schemas import (
     ConversationPatch,
     FileOut,
     HealthResponse,
+    MemoryChatMessageOut,
+    MemoryChatRequest,
+    MemoryChatResponse,
+    MemoryRefineOut,
     MemorySummaryOut,
     MemorySummaryUpdate,
     MessageOut,
@@ -60,6 +64,7 @@ from app.db.base import (
     AgentRun,
     Artifact,
     Conversation,
+    MemoryChatMessage,
     MemorySummary,
     Message,
     MessageFile,
@@ -73,9 +78,13 @@ from app.files.service import FileValidationError, create_file
 from app.files.storage import get_storage
 from app.integrations.qwen import QwenAdapter
 from app.memory.service import (
+    chat_with_memory,
     get_app_settings,
     get_memory_summary_record,
-    refine_idle_memory_summary,
+    list_memory_chat_messages,
+    process_due_memory_conversations,
+    queue_idle_memory_conversations,
+    refine_pending_memory_summary,
 )
 from app.skills.service import normalize_skill_name
 
@@ -616,11 +625,71 @@ async def clear_memory_summary(session: SessionDep) -> None:
     await session.commit()
 
 
+@router.get("/memory-summary/messages", response_model=list[MemoryChatMessageOut])
+async def memory_chat_history(session: SessionDep) -> list[MemoryChatMessage]:
+    return await list_memory_chat_messages(session)
+
+
+@router.post("/memory-summary/messages", response_model=MemoryChatResponse)
+async def create_memory_chat_message(
+    payload: MemoryChatRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: CurrentUserDep,
+) -> MemoryChatResponse:
+    app_settings = await get_app_settings(session, user.id)
+    if not app_settings.memory_enabled:
+        raise HTTPException(409, "Memory 已关闭")
+    user_message, assistant_message, result = await chat_with_memory(
+        session, settings, payload.content.strip(), user.id
+    )
+    return MemoryChatResponse(
+        user_message=user_message,
+        assistant_message=assistant_message,
+        summary=result.summary,
+        changed=result.changed,
+    )
+
+
+@router.delete("/memory-summary/messages", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_memory_chat_history(
+    session: SessionDep, user: CurrentUserDep
+) -> None:
+    messages = await list_memory_chat_messages(session, user.id)
+    for message in messages:
+        await session.delete(message)
+    await session.commit()
+
+
+@router.post("/memory-summary/refine", response_model=MemoryRefineOut)
+async def refine_pending_memory(
+    session: SessionDep, user: CurrentUserDep
+) -> MemoryRefineOut:
+    app_settings = await get_app_settings(session, user.id)
+    if not app_settings.memory_enabled:
+        raise HTTPException(409, "Memory 已关闭")
+    result = await refine_pending_memory_summary(session, user.id)
+    summary = await get_memory_summary_record(session, user.id)
+    await session.refresh(summary)
+    return MemoryRefineOut(
+        added_facts=result.added_facts,
+        processed_messages=result.processed_messages,
+        summary=summary,
+    )
+
+
 @router.post("/maintenance/memory-summary/refine")
 async def refine_memory_summary(
-    session: SessionDep, user: CurrentUserDep
+    session: SessionDep, settings: SettingsDep, user: CurrentUserDep
 ) -> dict[str, int]:
-    return {"added_facts": await refine_idle_memory_summary(session, user_id=user.id)}
+    queued = await queue_idle_memory_conversations(
+        session,
+        idle_hours=settings.memory_idle_hours,
+        timezone_name=settings.memory_batch_timezone,
+        user_id=user.id,
+    )
+    result = await process_due_memory_conversations(session, user_id=user.id)
+    return {"queued": queued, "added_facts": result.added_facts}
 
 
 @router.get("/settings", response_model=AppSettingsOut)

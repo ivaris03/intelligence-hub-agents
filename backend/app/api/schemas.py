@@ -221,6 +221,33 @@ class MemorySummaryOut(BaseModel):
     updated_at: datetime
 
 
+class MemoryChatRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4_000)
+
+
+class MemoryChatMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    role: Literal["user", "assistant"]
+    content: str
+    memory_changed: bool
+    created_at: datetime
+
+
+class MemoryChatResponse(BaseModel):
+    user_message: MemoryChatMessageOut
+    assistant_message: MemoryChatMessageOut
+    summary: MemorySummaryOut
+    changed: bool
+
+
+class MemoryRefineOut(BaseModel):
+    added_facts: int
+    processed_messages: int
+    summary: MemorySummaryOut
+
+
 class AppSettingsPatch(BaseModel):
     memory_enabled: bool | None = None
     web_search_enabled: bool | None = None

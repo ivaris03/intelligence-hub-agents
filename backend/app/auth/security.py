@@ -20,7 +20,7 @@ from app.db.session import get_session
 
 PASSWORD_ITERATIONS = 600_000
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    "admin": frozenset({"users:read", "users:manage"}),
+    "admin": frozenset({"workspace:use", "users:read", "users:manage"}),
     "member": frozenset({"workspace:use"}),
 }
 

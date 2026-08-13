@@ -8,7 +8,10 @@ from app.api.routes import public_router, router
 from app.auth.routes import router as auth_router
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
-from app.memory.service import refine_idle_memory_summary
+from app.memory.service import (
+    process_due_memory_conversations,
+    queue_idle_memory_conversations,
+)
 
 settings = get_settings()
 
@@ -17,7 +20,12 @@ async def _memory_refinement_loop() -> None:
     while True:
         try:
             async with AsyncSessionLocal() as session:
-                await refine_idle_memory_summary(session)
+                await queue_idle_memory_conversations(
+                    session,
+                    idle_hours=settings.memory_idle_hours,
+                    timezone_name=settings.memory_batch_timezone,
+                )
+                await process_due_memory_conversations(session)
         except asyncio.CancelledError:
             raise
         except Exception:

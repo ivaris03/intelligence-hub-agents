@@ -86,7 +86,7 @@ flowchart TB
 #### 1.4.3 Skill 与 Memory 流程
 
 - Skill：选择器支持显式多选并直接注入 System Prompt；未选择时可按任务自动匹配一个已启用的 Skill，`@Skill` 不触发调用。发送时生成不可变快照，后续编辑不影响历史请求。
-- Memory：明确的“记住/忘记”命令立即更新单份用户记忆摘要；会话闲置 30 分钟后仅提炼稳定、低风险信息；每轮将整份摘要注入 System Prompt。
+- Memory：明确的“记住/忘记”命令立即更新单份用户记忆摘要；会话闲置 6 小时后进入持久化待处理队列，并在用户本地午夜统一提炼稳定、低风险信息；每轮将整份摘要注入 System Prompt。
 
 ### 1.5 核心业务对象
 
@@ -274,7 +274,8 @@ Skill Service 提供名称、描述、指令和启停状态的 CRUD。选择器�
 Memory Service 管理单份用户记忆摘要、启停状态和最近更新来源：
 
 - 用户明确要求“记住/忘记”时，同步执行变更并返回结果。
-- 会话最后活动满 30 分钟后，应用内周期任务提炼新增内容；应用重启后根据 `last_activity_at` 和提炼游标补扫到期会话。
+- 会话最后活动满 6 小时后，应用内周期任务将会话与本次截止时间写入持久化待处理队列；每天用户本地午夜按用户统一消费队列。应用重启后会补扫未入队会话，并立即补处理已经错过执行时间的队列项。
+- 队列保存入队时的消息截止时间；会话入队后产生的新消息不会被当前批次提前消费，需再次满足闲置条件后进入下一批次。
 - 自动提炼只保存稳定、低风险的偏好和背景；敏感、含糊或冲突内容不自动写入。
 - Chat 每轮将整份用户记忆摘要作为独立的低优先级 System Prompt 上下文注入；Work 运行也复用同一摘要。
 - Memory 关闭时停止提炼、写入和注入；已有数据保留，删除后立即不再使用。
@@ -366,6 +367,7 @@ Deep Agents：研究规划 -> 搜索与提取 -> 必要的固定子 Agent 委派
 | `skills` | `id`、`name`、`description`、`instructions`、`enabled`、`updated_at` |
 | `skill_snapshots` | `id`、`skill_id`、`name`、`description`、`instructions`、`content_hash` |
 | `memory_summaries` | 固定 `id=1`、`content`、`source`、`source_conversation_id`、`created_at`、`updated_at` |
+| `pending_memory_conversations` | 待处理会话的 `conversation_id`、`user_id`、消息截止时间 `through_at`、午夜执行时间 `process_after`、入队时间 |
 | `app_settings` | `memory_enabled`、`web_search_enabled`、外观设置 |
 | `files` | `id`、`conversation_id`、`name`、`mime_type`、`kind`、`storage_key`、`status`、`created_at` |
 | `file_chunks` | `id`、`file_id`、`content`、`locator`、`embedding` |
@@ -498,5 +500,5 @@ MVP 测试重点：
 | 向量存储 | pgvector | 与主数据库合并，减少服务数量 |
 | 长任务 | 进程内后台执行；演示阶段持久化 | 简化部署，同时支持 PPT 修改与手动恢复 |
 | Skill | 数据库正文 + 请求级快照 | 管理简单，并保证历史调用可追溯 |
-| Memory | 单份用户摘要 + 30 分钟闲置提炼 + 每轮完整注入 | 实现简单，保证每轮个性化上下文一致 |
+| Memory | 单份用户摘要 + 闲置 6 小时持久化入队 + 用户本地午夜批处理 + 每轮完整注入 | 降低频繁改写，保证批处理可恢复并维持每轮个性化上下文一致 |
 | 用户模型 | 单用户 | 符合个人项目定位 |
