@@ -22,6 +22,7 @@ from app.agents.workflows import (
     ResearchTopic,
     build_research_graph,
     deterministic_research_topic,
+    deterministic_research_topic_turn,
     normalize_presentation_outline,
     presentation_content_page_limit,
     route_presentation_intent,
@@ -175,6 +176,27 @@ def test_research_topic_is_created_even_for_an_explicit_request() -> None:
     assert topic.scope
     assert topic.key_questions
     assert topic.deliverable.endswith("研究报告")
+
+
+def test_research_topic_dialogue_can_explain_and_revise_the_topic() -> None:
+    topic = ResearchTopic(
+        title="个人 Agent Hub 的价值",
+        objective="评估产品价值与落地方式",
+        scope=["个人用户价值", "团队协作价值", "商业化路径"],
+        key_questions=["核心用户是谁？", "如何落地？"],
+    )
+
+    explained = deterministic_research_topic_turn(topic, "当前范围包括哪些内容？")
+    assert explained.topic_changed is False
+    assert explained.topic == topic
+    assert "个人用户价值" in explained.reply
+
+    revised = deterministic_research_topic_turn(
+        topic, "只关注个人用户价值，排除团队协作价值"
+    )
+    assert revised.topic_changed is True
+    assert revised.topic.scope == ["个人用户价值"]
+    assert "排除：团队协作价值" in revised.topic.constraints
 
 
 def test_research_evaluation_keeps_gaps_when_search_budget_is_exhausted() -> None:

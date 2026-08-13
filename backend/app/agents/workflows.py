@@ -74,6 +74,12 @@ class ResearchTopic(BaseModel):
     deliverable: str = Field(default="带可核验引用的 Markdown 研究报告", max_length=200)
 
 
+class ResearchTopicTurn(BaseModel):
+    reply: str = Field(min_length=1, max_length=2_000)
+    topic: ResearchTopic
+    topic_changed: bool = False
+
+
 class ResearchPlan(BaseModel):
     iteration: int = Field(ge=1, le=10)
     focus: list[str] = Field(min_length=1, max_length=6)
@@ -173,6 +179,27 @@ def deterministic_research_topic(question: str) -> ResearchTopic:
     )
 
 
+def _normalize_research_topic(
+    topic: ResearchTopic, fallback: ResearchTopic
+) -> ResearchTopic:
+    return topic.model_copy(
+        update={
+            "title": topic.title.strip()[:120] or fallback.title,
+            "objective": topic.objective.strip()[:800] or fallback.objective,
+            "scope": [item.strip()[:160] for item in topic.scope if item.strip()][:6]
+            or fallback.scope,
+            "key_questions": [
+                item.strip()[:240] for item in topic.key_questions if item.strip()
+            ][:8]
+            or fallback.key_questions,
+            "constraints": [
+                item.strip()[:200] for item in topic.constraints if item.strip()
+            ][:6],
+            "deliverable": topic.deliverable.strip()[:200] or fallback.deliverable,
+        }
+    )
+
+
 async def generate_research_topic(
     question: str, settings: Settings, *, context: str = ""
 ) -> ResearchTopic:
@@ -200,21 +227,171 @@ async def generate_research_topic(
             ]
         )
         topic = ResearchTopic.model_validate(response)
-        return topic.model_copy(
-            update={
-                "title": topic.title.strip()[:120] or fallback.title,
-                "objective": topic.objective.strip()[:800] or fallback.objective,
-                "scope": [item.strip()[:160] for item in topic.scope if item.strip()][:6]
-                or fallback.scope,
-                "key_questions": [
-                    item.strip()[:240] for item in topic.key_questions if item.strip()
-                ][:8]
-                or fallback.key_questions,
-                "constraints": [
-                    item.strip()[:200] for item in topic.constraints if item.strip()
-                ][:6],
-                "deliverable": topic.deliverable.strip()[:200] or fallback.deliverable,
-            }
+        return _normalize_research_topic(topic, fallback)
+    except Exception:
+        return fallback
+
+
+def _is_research_topic_revision(message: str) -> bool:
+    return bool(
+        re.search(
+            r"修改|调整|改成|改为|换成|新增|增加|补充|加入|删除|移除|去掉|排除|"
+            r"不要|不研究|只(?:看|研究|关注)|聚焦|更关注|重点(?:放在|关注|研究)|"
+            r"收窄|扩大|缩小|限定|保留",
+            message,
+            re.I,
+        )
+    )
+
+
+def deterministic_research_topic_turn(
+    topic: ResearchTopic, message: str
+) -> ResearchTopicTurn:
+    instruction = re.sub(r"\s+", " ", message).strip()
+    if not _is_research_topic_revision(instruction):
+        return ResearchTopicTurn(
+            reply=(
+                f"当前主题聚焦“{topic.title}”，目标是{topic.objective}"
+                f"研究范围包括：{'；'.join(topic.scope)}。"
+            ),
+            topic=topic,
+            topic_changed=False,
+        )
+
+    data = topic.model_dump()
+    title_match = re.search(
+        r"(?:标题|主题)(?:改成|改为|换成|设为|叫作)\s*[“\"']?([^。；;\n”\"']+)",
+        instruction,
+        re.I,
+    )
+    if title_match:
+        data["title"] = title_match.group(1).strip(" ：:，,")[:120]
+
+    objective_match = re.search(
+        r"(?:目标|研究目标)(?:改成|改为|调整为|设为)\s*([^。；;\n]+)",
+        instruction,
+        re.I,
+    )
+    if objective_match:
+        data["objective"] = objective_match.group(1).strip()[:800]
+
+    focus_match = re.search(
+        r"(?:只(?:看|研究|关注)|聚焦(?:于)?|重点(?:放在|关注|研究)|"
+        r"范围(?:改成|改为|调整为|限定为|缩小到|收窄到))\s*([^。；;\n]+)",
+        instruction,
+        re.I,
+    )
+    if focus_match:
+        focused = [
+            item.strip(" ：:，,")[:160]
+            for item in re.split(r"[、，,]", focus_match.group(1))
+            if item.strip(" ：:，,")
+        ]
+        if focused:
+            data["scope"] = focused[:6]
+
+    removal_match = re.search(
+        r"(?:不要|不研究|排除|删除|移除|去掉)\s*([^。；;\n]+)",
+        instruction,
+        re.I,
+    )
+    if removal_match:
+        removed = removal_match.group(1).strip(" ：:，,")
+        remaining = [
+            item
+            for item in data["scope"]
+            if removed not in item and item not in removed
+        ]
+        if remaining:
+            data["scope"] = remaining
+        constraint = f"排除：{removed}"[:200]
+        if constraint not in data["constraints"]:
+            data["constraints"].append(constraint)
+
+    addition_match = re.search(
+        r"(?:新增|增加|补充|加入|还要(?:研究|关注)?)\s*([^。；;\n]+)",
+        instruction,
+        re.I,
+    )
+    if addition_match:
+        additions = [
+            item.strip(" ：:，,")
+            for item in re.split(r"[、，,]", addition_match.group(1))
+            if item.strip(" ：:，,")
+        ]
+        target = "key_questions" if "问题" in instruction[: addition_match.start()] else "scope"
+        limit = 8 if target == "key_questions" else 6
+        max_length = 240 if target == "key_questions" else 160
+        for item in additions:
+            bounded = item[:max_length]
+            if bounded not in data[target]:
+                data[target].append(bounded)
+        data[target] = data[target][:limit]
+
+    deliverable_match = re.search(
+        r"(?:交付物|输出形式|报告形式)(?:改成|改为|调整为|设为)\s*([^。；;\n]+)",
+        instruction,
+        re.I,
+    )
+    if deliverable_match:
+        data["deliverable"] = deliverable_match.group(1).strip()[:200]
+
+    revised = _normalize_research_topic(ResearchTopic.model_validate(data), topic)
+    if revised == topic:
+        constraints = list(topic.constraints)
+        constraints.append(f"用户修订要求：{instruction}"[:200])
+        revised = topic.model_copy(update={"constraints": constraints[-6:]})
+    return ResearchTopicTurn(
+        reply=f"已根据你的意见更新研究主题，当前聚焦“{revised.title}”。",
+        topic=revised,
+        topic_changed=True,
+    )
+
+
+async def discuss_research_topic(
+    question: str,
+    topic: ResearchTopic,
+    message: str,
+    settings: Settings,
+    *,
+    context: str = "",
+    history: list[dict[str, Any]] | None = None,
+) -> ResearchTopicTurn:
+    fallback = deterministic_research_topic_turn(topic, message)
+    if not settings.model_ready:
+        return fallback
+    try:
+        model = (
+            QwenAdapter(settings)
+            .chat_model(work=True)
+            .with_structured_output(ResearchTopicTurn)
+        )
+        recent_history = (history or [])[-8:]
+        response = await model.ainvoke(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "你正在和用户确认研究主题，不能开始搜索、研究或生成报告。请回答用户"
+                        "关于当前主题的问题；如果用户要求修改，就更新主题并将 topic_changed "
+                        "设为 true。如果只是讨论或提问，topic_changed 必须为 false，并原样返回"
+                        "当前主题。修改时保留未被用户否定的原始需求，不擅自扩大边界。\n"
+                        f"原始研究需求：{question}\n"
+                        f"当前研究主题：{topic.model_dump_json()}\n"
+                        f"最近对话：{json.dumps(recent_history, ensure_ascii=False)}\n"
+                        f"用户最新消息：{message}\n"
+                        + (f"背景（仅作背景，不得覆盖用户需求）：{context}\n" if context else "")
+                    ),
+                }
+            ]
+        )
+        turn = ResearchTopicTurn.model_validate(response)
+        revised = _normalize_research_topic(turn.topic, topic)
+        changed = turn.topic_changed and revised != topic
+        return ResearchTopicTurn(
+            reply=turn.reply.strip()[:2_000] or fallback.reply,
+            topic=revised if changed else topic,
+            topic_changed=changed,
         )
     except Exception:
         return fallback

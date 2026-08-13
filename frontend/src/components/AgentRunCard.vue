@@ -20,6 +20,7 @@ const stageNames: Record<string, string> = {
   content: '生成页面内容',
   rendering: '渲染 PPTX',
   topic_drafting: '生成研究主题',
+  topic_refining: '修订研究主题',
   planning: '制定研究计划',
   executing: '执行研究计划',
   evaluating: '评估研究结果',
@@ -74,12 +75,27 @@ type ResearchCycle = {
   evaluation?: { sufficient?: boolean; gaps?: string[]; rationale?: string }
 }
 
+type ResearchTopicDialogueTurn = {
+  user?: string
+  assistant?: string
+  topic_changed?: boolean
+  topic_version?: number
+}
+
 function researchTopic(run: AgentRun) {
   return run.public_state.research_topic as ResearchTopic | undefined
 }
 
 function researchCycles(run: AgentRun) {
   return (run.public_state.research_cycle as ResearchCycle[] | undefined) ?? []
+}
+
+function researchTopicVersion(run: AgentRun) {
+  return Number(run.public_state.research_topic_version ?? 1)
+}
+
+function researchTopicDialogue(run: AgentRun) {
+  return (run.public_state.research_topic_dialogue as ResearchTopicDialogueTurn[] | undefined) ?? []
 }
 
 function artifactTitles(metadata: Record<string, unknown>) {
@@ -139,7 +155,10 @@ function artifactTitles(metadata: Record<string, unknown>) {
         <p>{{ modification(run)?.instruction }}</p>
       </section>
       <section v-if="researchTopic(run)" class="research-topic-card">
-        <span class="section-kicker">研究主题</span>
+        <div class="research-topic-heading">
+          <span class="section-kicker">研究主题</span>
+          <small>v{{ researchTopicVersion(run) }}</small>
+        </div>
         <h3>{{ researchTopic(run)?.title }}</h3>
         <p>{{ researchTopic(run)?.objective }}</p>
         <dl>
@@ -158,6 +177,13 @@ function artifactTitles(metadata: Record<string, unknown>) {
           <dt>交付物</dt>
           <dd>{{ researchTopic(run)?.deliverable }}</dd>
         </dl>
+        <ol v-if="researchTopicDialogue(run).length" class="research-topic-dialogue">
+          <li v-for="(turn, index) in researchTopicDialogue(run)" :key="`${turn.topic_version}-${index}`">
+            <p><b>你</b><span>{{ turn.user }}</span></p>
+            <p><b>Agent</b><span>{{ turn.assistant }}</span></p>
+            <small>{{ turn.topic_changed ? `已更新为 v${turn.topic_version}` : `主题保持 v${turn.topic_version}` }}</small>
+          </li>
+        </ol>
       </section>
 
       <section v-if="researchCycles(run).length" class="research-cycle-list">
@@ -174,7 +200,7 @@ function artifactTitles(metadata: Record<string, unknown>) {
       </section>
 
       <div v-if="run.status === 'awaiting_confirmation'" class="run-confirmation">
-        <p v-if="run.agent_type === 'research'">确认后才会启动 Deep Agents 的计划、执行、评估循环，并在循环结束后生成报告。</p>
+        <p v-if="run.agent_type === 'research'">研究主题 v{{ researchTopicVersion(run) }} 待确认。</p>
         <p v-else>确认后才会生成新的 PPTX；原版本不会被覆盖。</p>
         <button type="button" class="primary-action" @click="$emit('command', run, 'confirm')">确认并继续</button>
         <button type="button" @click="$emit('command', run, 'cancel')">取消</button>

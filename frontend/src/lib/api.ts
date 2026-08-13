@@ -182,14 +182,26 @@ type ChatPayload = {
   thinking_effort?: ThinkingEffort
 }
 
+function apiErrorMessage(detail: unknown): string | null {
+  if (typeof detail === 'string') return detail
+  if (!Array.isArray(detail)) return null
+  const messages = detail
+    .map((item) => {
+      if (typeof item === 'string') return item
+      if (item && typeof item === 'object' && 'msg' in item) return String(item.msg)
+      return ''
+    })
+    .filter(Boolean)
+  return messages.length ? messages.join('；') : null
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, withAuth(init))
   if (!response.ok) {
     let detail = `请求失败（${response.status}）`
     try {
-      const body = (await response.json()) as { detail?: string | Array<{ msg: string }> }
-      if (typeof body.detail === 'string') detail = body.detail
-      else if (Array.isArray(body.detail)) detail = body.detail.map((item) => item.msg).join('；')
+      const body = (await response.json()) as { detail?: unknown }
+      detail = apiErrorMessage(body.detail) ?? detail
     } catch {
       // Keep the safe status-only fallback.
     }
@@ -239,8 +251,8 @@ async function streamResponse(
   if (!response.ok || !response.body) {
     let message = `请求失败（${response.status}）`
     try {
-      const payload = (await response.json()) as { detail?: string }
-      if (payload.detail) message = payload.detail
+      const payload = (await response.json()) as { detail?: unknown }
+      message = apiErrorMessage(payload.detail) ?? message
     } catch {
       // Keep status fallback.
     }
@@ -393,14 +405,15 @@ export const runsApi = {
   ) => streamResponse('/api/agent-runs', jsonInit('POST', payload), onEvent, signal),
   command: (
     id: string,
-    action: 'confirm' | 'cancel' | 'retry',
+    action: 'confirm' | 'cancel' | 'retry' | 'revise',
     onEvent?: (event: StreamEvent) => void,
     signal?: AbortSignal,
+    input?: string,
   ) => {
     if (action === 'cancel') return api<AgentRun>(`/api/agent-runs/${id}/commands`, jsonInit('POST', { action }))
     return streamResponse(
       `/api/agent-runs/${id}/commands`,
-      jsonInit('POST', { action }),
+      jsonInit('POST', { action, ...(input ? { input } : {}) }),
       onEvent ?? (() => undefined),
       signal,
     )

@@ -35,6 +35,7 @@ from app.agents.workflows import (
     build_presentation_graph,
     build_research_graph,
     deterministic_outline,
+    discuss_research_topic,
     generate_research_topic,
     modification_plan,
     normalize_presentation_outline,
@@ -218,6 +219,7 @@ async def stream_run(
     settings: Settings,
     *,
     action: str | None = None,
+    command_input: str | None = None,
 ):
     thinking_effort = run.public_state.get("thinking_effort", "medium")
     if thinking_effort not in {"none", "low", "medium", "high"}:
@@ -231,6 +233,7 @@ async def stream_run(
             "agent_type": run.agent_type,
             "intent": run.intent,
             "action": action,
+            "command_input": command_input,
             "conversation_id": str(run.conversation_id),
             "run_id": str(run.id),
         },
@@ -246,7 +249,13 @@ async def stream_run(
         },
     ) as trace:
         artifact_payloads: list[dict[str, Any]] = []
-        async for event_type, payload in _stream_run(session, run, settings, action=action):
+        async for event_type, payload in _stream_run(
+            session,
+            run,
+            settings,
+            action=action,
+            command_input=command_input,
+        ):
             if event_type == "artifact.created" and payload.get("artifact"):
                 artifact_payloads.append(payload["artifact"])
             yield event_type, payload
@@ -269,12 +278,13 @@ async def _stream_run(
     settings: Settings,
     *,
     action: str | None = None,
+    command_input: str | None = None,
 ):
     existing_seq = await session.scalar(
         select(func.max(RunEvent.seq)).where(RunEvent.run_id == run.id)
     )
     event_seq = int(existing_seq or 0)
-    if action in {"confirm", "retry", "resume"}:
+    if action in {"confirm", "retry", "resume", "revise"}:
         _cancellations[run.id] = asyncio.Event()
     cancellation = _cancellations.setdefault(run.id, asyncio.Event())
 
@@ -314,7 +324,13 @@ async def _stream_run(
                 yield event
         else:
             async for event in _stream_research(
-                session, run, settings, stage, emit, action=action
+                session,
+                run,
+                settings,
+                stage,
+                emit,
+                action=action,
+                command_input=command_input,
             ):
                 yield event
     except asyncio.CancelledError:
@@ -1026,8 +1042,17 @@ def _modify_presentation(source: bytes, plan_data: dict[str, Any]) -> tuple[byte
     return output.getvalue(), titles
 
 
-async def _stream_research(session, run, settings, stage, emit, *, action=None):
-    if action not in {None, "confirm", "retry"}:
+async def _stream_research(
+    session,
+    run,
+    settings,
+    stage,
+    emit,
+    *,
+    action=None,
+    command_input: str | None = None,
+):
+    if action not in {None, "confirm", "retry", "revise"}:
         raise ValueError("不支持的研究命令")
     state = dict(run.public_state or {})
     if action == "retry" and not state.get("research_topic_confirmed"):
@@ -1040,12 +1065,74 @@ async def _stream_research(session, run, settings, stage, emit, *, action=None):
         topic = await generate_research_topic(run.input, settings, context=context)
         state["research_topic"] = topic.model_dump(mode="json")
         state["research_topic_confirmed"] = False
+        state["research_topic_version"] = 1
+        state["research_topic_dialogue"] = []
         state["research_cycle"] = []
         run.public_state = state
         run.stage = "awaiting_confirmation"
         run.status = "awaiting_confirmation"
         await session.commit()
         yield await emit("research.topic.ready", {"topic": state["research_topic"]})
+        yield await emit(
+            "run.stage",
+            {
+                "stage": "awaiting_confirmation",
+                "label": "等待确认研究主题",
+                "status": "awaiting_confirmation",
+            },
+        )
+        yield await emit(
+            "completed", {"status": "awaiting_confirmation", "requires_action": True}
+        )
+        return
+    if action == "revise":
+        if "research_topic" not in state:
+            raise ValueError("研究主题不存在，请重新开始研究任务")
+        message = (command_input or "").strip()
+        if not message:
+            raise ValueError("研究主题对话不能为空")
+        yield await stage("topic_refining", "讨论并修订研究主题")
+        context = await _run_context(session, run, settings)
+        dialogue = list(state.get("research_topic_dialogue", []))
+        current_topic = ResearchTopic.model_validate(state["research_topic"])
+        turn = await discuss_research_topic(
+            run.input,
+            current_topic,
+            message,
+            settings,
+            context=context,
+            history=dialogue,
+        )
+        version = int(state.get("research_topic_version", 1))
+        if turn.topic_changed:
+            version += 1
+        dialogue.append(
+            {
+                "user": message,
+                "assistant": turn.reply,
+                "topic_changed": turn.topic_changed,
+                "topic_version": version,
+            }
+        )
+        state["research_topic"] = turn.topic.model_dump(mode="json")
+        state["research_topic_confirmed"] = False
+        state["research_topic_version"] = version
+        state["research_topic_dialogue"] = dialogue[-50:]
+        state["research_cycle"] = []
+        run.public_state = state
+        run.stage = "awaiting_confirmation"
+        run.status = "awaiting_confirmation"
+        await session.commit()
+        yield await emit(
+            "research.topic.turn",
+            {
+                "message": message,
+                "reply": turn.reply,
+                "changed": turn.topic_changed,
+                "topic": state["research_topic"],
+                "version": version,
+            },
+        )
         yield await emit(
             "run.stage",
             {

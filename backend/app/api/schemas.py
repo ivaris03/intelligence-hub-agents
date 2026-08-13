@@ -299,8 +299,14 @@ class AgentRunRequest(BaseModel):
 
 
 class AgentRunCommand(BaseModel):
-    action: Literal["confirm", "cancel", "retry"]
+    action: Literal["confirm", "cancel", "retry", "revise"]
     input: str | None = Field(default=None, max_length=20_000)
+
+    @model_validator(mode="after")
+    def validate_research_revision(self):
+        if self.action == "revise" and not (self.input or "").strip():
+            raise ValueError("研究主题对话不能为空")
+        return self
 
 
 class ArtifactOut(BaseModel):

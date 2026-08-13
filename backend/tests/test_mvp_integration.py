@@ -549,6 +549,29 @@ def test_all_agent_artifacts_and_slide_confirmation(mvp_client: TestClient) -> N
     assert research_run["artifacts"] == []
     assert research_run["public_state"]["research_topic"]["title"]
     assert research_run["public_state"]["research_topic_confirmed"] is False
+    original_input = research_run["input"]
+    revised_research = mvp_client.post(
+        f"/api/agent-runs/{research_run['id']}/commands",
+        json={
+            "action": "revise",
+            "input": "只关注个人用户价值，排除团队协作价值",
+        },
+    )
+    assert revised_research.status_code == 200
+    assert "event: research.topic.turn" in revised_research.text
+    assert "awaiting_confirmation" in revised_research.text
+    assert "event: tool.started" not in revised_research.text
+    revised_run = mvp_client.get(f"/api/agent-runs/{research_run['id']}").json()
+    assert revised_run["input"] == original_input
+    assert revised_run["status"] == "awaiting_confirmation"
+    assert revised_run["artifacts"] == []
+    assert revised_run["public_state"]["research_topic_version"] == 2
+    assert revised_run["public_state"]["research_topic"]["scope"] == [
+        "个人用户价值"
+    ]
+    assert revised_run["public_state"]["research_topic_dialogue"][-1][
+        "topic_changed"
+    ] is True
     confirmed_research = mvp_client.post(
         f"/api/agent-runs/{research_run['id']}/commands", json={"action": "confirm"}
     )

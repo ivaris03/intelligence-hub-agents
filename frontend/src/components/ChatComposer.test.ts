@@ -76,4 +76,19 @@ describe('ChatComposer skill and agent selection', () => {
       [['skill-1', 'skill-2']],
     ])
   })
+
+  it('turns the Work composer into a research topic dialogue entry', async () => {
+    const wrapper = mountComposer()
+    await wrapper.setProps({ agentType: 'research', topicDiscussion: true })
+
+    expect(wrapper.get('textarea').attributes('placeholder')).toBe('继续讨论或修改研究主题…')
+    expect(wrapper.find('.icon-button').exists()).toBe(false)
+    expect(wrapper.find('.skill-select').exists()).toBe(false)
+    expect(wrapper.find('.model-effort-control').exists()).toBe(false)
+
+    await wrapper.get('textarea').setValue('把范围缩小到个人用户')
+    await wrapper.setProps({ modelValue: '把范围缩小到个人用户' })
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('send')).toEqual([['把范围缩小到个人用户']])
+  })
 })

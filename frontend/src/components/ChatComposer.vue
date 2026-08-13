@@ -15,6 +15,7 @@ const props = defineProps<{
   modelName: string
   thinkingEffort: ThinkingEffort
   uploadProgress: Record<string, number>
+  topicDiscussion?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -71,7 +72,7 @@ function readableSize(bytes: number) {
 
 <template>
   <div class="composer-shell">
-    <div v-if="selectedFiles.length || selectedSkills.length || Object.keys(uploadProgress).length" class="attachment-strip">
+    <div v-if="!topicDiscussion && (selectedFiles.length || selectedSkills.length || Object.keys(uploadProgress).length)" class="attachment-strip">
       <span v-for="file in selectedFiles" :key="file.id" class="attachment-chip">
         {{ file.kind === 'image' ? '▧' : '▤' }} {{ file.name }}
         <button type="button" aria-label="移除文件" @click="$emit('toggleFile', file.id)">×</button>
@@ -89,7 +90,7 @@ function readableSize(bytes: number) {
         v-model="content"
         aria-label="消息"
         rows="1"
-        placeholder="输入消息，或描述想完成的工作…"
+        :placeholder="topicDiscussion ? '继续讨论或修改研究主题…' : '输入消息，或描述想完成的工作…'"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
       <div v-if="showFiles" class="file-popover">
@@ -141,7 +142,7 @@ function readableSize(bytes: number) {
             accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp"
             @change="chooseFiles"
           />
-          <button type="button" class="icon-button" title="添加文件" @click="showFiles = !showFiles; showSkills = false">＋</button>
+          <button v-if="!topicDiscussion" type="button" class="icon-button" title="添加文件" @click="showFiles = !showFiles; showSkills = false">＋</button>
           <select
             v-if="mode === 'work'"
             class="agent-select composer-agent-select"
@@ -154,12 +155,12 @@ function readableSize(bytes: number) {
             <option value="slides">PPT Agent</option>
             <option value="research">研究 Agent</option>
           </select>
-          <button type="button" class="skill-select" aria-haspopup="true" :aria-expanded="showSkills" @click="toggleSkills">
+          <button v-if="!topicDiscussion" type="button" class="skill-select" aria-haspopup="true" :aria-expanded="showSkills" @click="toggleSkills">
             Skill{{ selectedSkillIds.length ? ` · ${selectedSkillIds.length}` : '' }}
           </button>
         </div>
         <div class="composer-submit-actions">
-          <label class="model-effort-control" title="当前模型和本轮思考强度">
+          <label v-if="!topicDiscussion" class="model-effort-control" title="当前模型和本轮思考强度">
             <span>{{ modelName }}</span>
             <select
               :value="thinkingEffort"

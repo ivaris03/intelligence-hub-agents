@@ -956,19 +956,32 @@ async def command_agent_run(
         await cancel_run(session, run_id)
         loaded = await load_run(session, run_id)
         return _run_out(loaded)
+    if payload.action == "revise":
+        if run.agent_type != "research":
+            raise HTTPException(400, "只有研究 Agent 支持主题对话")
+        if run.status != "awaiting_confirmation":
+            raise HTTPException(409, "研究主题当前不在等待确认阶段")
     if run.agent_type not in {"slides", "research"} and payload.action == "confirm":
         raise HTTPException(400, "当前 Agent 不需要确认")
     if payload.action == "confirm" and run.status != "awaiting_confirmation":
         raise HTTPException(409, "运行当前不在等待确认阶段")
     if payload.action == "retry" and run.status not in {"failed", "cancelled"}:
         raise HTTPException(409, "只有失败或已取消的运行可以重试")
-    if payload.input:
+    if payload.input and payload.action != "revise":
         run.input = payload.input.strip()
     if payload.action == "retry":
         run.error = None
         run.status = "running"
     await session.commit()
-    return sse_response(stream_run(session, run, settings, action=payload.action))
+    return sse_response(
+        stream_run(
+            session,
+            run,
+            settings,
+            action=payload.action,
+            command_input=payload.input,
+        )
+    )
 
 
 @router.post("/agent-runs/{run_id}/resume")

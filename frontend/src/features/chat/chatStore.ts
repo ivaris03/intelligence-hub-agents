@@ -105,6 +105,14 @@ export const useChatStore = defineStore('chat', () => {
   const slideArtifacts = computed(() =>
     runs.value.flatMap((run) => run.artifacts).filter((artifact) => artifact.type === 'pptx'),
   )
+  const pendingResearchTopicRun = computed(() => {
+    if (agentType.value !== 'research') return null
+    return (
+      [...runs.value]
+        .reverse()
+        .find((run) => run.agent_type === 'research' && run.status === 'awaiting_confirmation') ?? null
+    )
+  })
   const timeline = computed<TimelineItem[]>(() => {
     const items: TimelineItem[] = [
       ...(mode.value === 'chat'
@@ -172,6 +180,12 @@ export const useChatStore = defineStore('chat', () => {
       messages.value = messageItems
       files.value = fileItems
       runs.value = runItems
+      if (
+        conversation.mode === 'work' &&
+        runItems.some((run) => run.agent_type === 'research' && run.status === 'awaiting_confirmation')
+      ) {
+        agentType.value = 'research'
+      }
     } catch (cause) {
       report(cause)
     } finally {
@@ -313,6 +327,21 @@ export const useChatStore = defineStore('chat', () => {
       run.public_state.research_topic = event.topic
       run.public_state.research_topic_confirmed = false
     }
+    if (event.type === 'research.topic.turn') {
+      run.public_state.research_topic = event.topic
+      run.public_state.research_topic_confirmed = false
+      run.public_state.research_topic_version = Number(event.version)
+      const dialogue = Array.isArray(run.public_state.research_topic_dialogue)
+        ? [...(run.public_state.research_topic_dialogue as Record<string, unknown>[])]
+        : []
+      dialogue.push({
+        user: String(event.message ?? ''),
+        assistant: String(event.reply ?? ''),
+        topic_changed: Boolean(event.changed),
+        topic_version: Number(event.version),
+      })
+      run.public_state.research_topic_dialogue = dialogue
+    }
     if (event.type === 'research.cycle') {
       const iteration = Number(event.iteration)
       const phase = String(event.phase)
@@ -404,6 +433,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function sendWork(content: string, conversationId: string) {
+    if (pendingResearchTopicRun.value) {
+      await runCommand(pendingResearchTopicRun.value, 'revise', content)
+      return
+    }
     const selectedFiles = files.value.filter((file) => selectedFileIds.value.includes(file.id))
     if (agentType.value === 'image' && selectedFiles.some((file) => file.kind !== 'image')) {
       error.value = '图片 Agent 只能使用图片作为参考文件'
@@ -486,7 +519,11 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function runCommand(run: AgentRun, action: 'confirm' | 'cancel' | 'retry' | 'resume') {
+  async function runCommand(
+    run: AgentRun,
+    action: 'confirm' | 'cancel' | 'retry' | 'resume' | 'revise',
+    input?: string,
+  ) {
     if (isStreaming.value) return
     error.value = ''
     if (action === 'cancel') {
@@ -503,11 +540,11 @@ export const useChatStore = defineStore('chat', () => {
     run.events = []
     try {
       if (action === 'resume') await runsApi.resume(run.id, (event) => handleRunEvent(run, event), controller.value.signal)
-      else await runsApi.command(run.id, action, (event) => handleRunEvent(run, event), controller.value.signal)
+      else await runsApi.command(run.id, action, (event) => handleRunEvent(run, event), controller.value.signal, input)
       await reloadActive()
     } catch (cause) {
-      run.status = 'failed'
       report(cause)
+      await reloadActive().catch(() => undefined)
     } finally {
       controller.value = null
       activeRunId.value = null
@@ -578,6 +615,7 @@ export const useChatStore = defineStore('chat', () => {
     selectedSkillIds,
     sourceArtifactId,
     slideArtifacts,
+    pendingResearchTopicRun,
     timeline,
     isStreaming,
     loading,

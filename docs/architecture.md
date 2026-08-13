@@ -319,7 +319,7 @@ queued -> running -> completed
 ##### 研究 Agent：LangGraph + Deep Agents
 
 ```text
-外层 LangGraph：生成研究主题 -> 等待用户确认
+外层 LangGraph：生成研究主题 -> 对话与修订主题 -> 等待用户确认
               -> Deep Agents 计划 -> 执行 -> 评估
                     ^                    |
                     |-- 证据仍不足 -----|
@@ -331,6 +331,7 @@ Deep Agents：每轮规划 -> 搜索与提取 -> 必要的固定子 Agent 委派
 
 - 外层 LangGraph 是业务状态的唯一顶层所有者，负责研究主题确认门禁、循环路由、搜索次数、总耗时、取消、公开阶段、报告汇总、证据校验、引用校验和最终产物登记。
 - 无论输入是否明确，第一次运行都只生成结构化 `ResearchTopic` 并进入 `awaiting_confirmation`；确认前不创建 Deep Agents 搜索工具调用，也不消耗搜索预算。
+- `awaiting_confirmation` 中的后续输入作为同一运行的主题对话命令处理。外层流程基于原始需求、当前主题和最近对话生成回复；需要修改时更新 `ResearchTopic` 版本与对话记录，并重新回到确认门禁，不新建运行、不覆盖原始需求。
 - Deep Agents 只负责开放式研究循环，包括本轮问题拆解与计划调整、Tavily 搜索、固定子 Agent 委派、上下文管理、证据整理和覆盖度评估。评估认为证据不足且预算允许时，外层图重新进入计划节点。
 - Deep Agents 不直接写业务数据库、不登记 Artifact，也不能绕过搜索和时间预算；Tavily 工具适配器必须在所有主 Agent 和子 Agent 调用上共享计数与截止时间。
 - 循环退出后，汇总节点基于已观察证据生成结构化 `ResearchResult`，至少包含报告章节、证据列表、引用关系和未解决问题；外层图复验 URL 与引用关系后才保存 Markdown。

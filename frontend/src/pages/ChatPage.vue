@@ -121,6 +121,7 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
         :selected-file-ids="chat.selectedFileIds"
         :skills="chat.enabledSkills"
         :upload-progress="chat.uploadProgress"
+        :topic-discussion="Boolean(chat.pendingResearchTopicRun)"
         @send="send"
         @stop="chat.stop"
         @add-files="chat.addFiles"
