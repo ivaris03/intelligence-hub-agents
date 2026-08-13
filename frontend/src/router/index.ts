@@ -6,6 +6,7 @@ import SettingsPage from '@/pages/SettingsPage.vue'
 import GeneralSettingsPage from '@/pages/settings/GeneralSettingsPage.vue'
 import McpSettingsPage from '@/pages/settings/McpSettingsPage.vue'
 import MemorySettingsPage from '@/pages/settings/MemorySettingsPage.vue'
+import SkillEditorPage from '@/pages/settings/SkillEditorPage.vue'
 import SkillSettingsPage from '@/pages/settings/SkillSettingsPage.vue'
 import AdminPage from '@/pages/AdminPage.vue'
 import { useAuth } from '@/features/auth/authStore'
@@ -25,6 +26,8 @@ const router = createRouter({
         { path: 'general', name: 'settings-general', component: GeneralSettingsPage },
         { path: 'mcp', name: 'settings-mcp', component: McpSettingsPage },
         { path: 'skill', name: 'settings-skill', component: SkillSettingsPage },
+        { path: 'skill/new', name: 'settings-skill-create', component: SkillEditorPage },
+        { path: 'skill/:skillId/edit', name: 'settings-skill-edit', component: SkillEditorPage },
         { path: 'memory', name: 'settings-memory', component: MemorySettingsPage },
       ],
     },
