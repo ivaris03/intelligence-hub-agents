@@ -12,10 +12,12 @@ describe('streamChat', () => {
         controller.close()
       },
     })
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200 })))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
     const events: string[] = []
-    await streamChat({ content: 'hi', mode: 'chat' }, (event) => events.push(event.type))
+    await streamChat({ content: 'hi', mode: 'chat', thinking_effort: 'high' }, (event) => events.push(event.type))
     expect(events).toEqual(['message.delta', 'completed'])
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ thinking_effort: 'high' })
     vi.unstubAllGlobals()
   })
 })

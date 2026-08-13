@@ -35,6 +35,8 @@ function mountComposer(mode: 'chat' | 'work' = 'work') {
       selectedSkillIds: [],
       mode,
       agentType: 'image',
+      modelName: 'qwen-plus',
+      thinkingEffort: 'medium',
       uploadProgress: {},
     },
   })

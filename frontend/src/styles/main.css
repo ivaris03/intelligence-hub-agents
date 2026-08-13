@@ -72,7 +72,6 @@ button { cursor: pointer; }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 0 24px; border-bottom: 1px solid rgba(222,219,210,.75); }
 .session-mode-pill { padding: 5px 9px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .agent-select { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: white; color: #555149; }
-.model-pill { margin-left: auto; color: #8a867e; font-size: 12px; }
 .conversation-title { max-width: 260px; overflow: hidden; margin-left: 5px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .source-select { max-width: 210px; }
 .conversation-view { min-height: 0; overflow-y: auto; }
@@ -105,6 +104,11 @@ button { cursor: pointer; }
 .composer textarea { display: block; width: 100%; max-height: 160px; resize: none; border: 0; outline: 0; padding: 4px 5px 13px; color: var(--ink); background: transparent; }
 .composer textarea::placeholder { color: #aaa69d; }
 .composer-actions { display: flex; align-items: center; justify-content: space-between; }
+.composer-submit-actions { display: flex; align-items: center; gap: 7px; }
+.model-effort-control { display: flex; align-items: center; height: 30px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: var(--paper); font-size: 10px; white-space: nowrap; }
+.model-effort-control > span { max-width: 130px; overflow: hidden; padding: 0 8px; text-overflow: ellipsis; }
+.model-effort-control select { align-self: stretch; padding: 0 6px; border: 0; border-left: 1px solid var(--line); outline: 0; background: transparent; color: var(--ink); font-size: 10px; }
+.model-effort-control select:disabled { opacity: .55; }
 .icon-button, .text-button { border: 0; background: transparent; color: #757168; height: 30px; }.icon-button { width: 30px; border: 1px solid var(--line); border-radius: 8px; }.text-button { font-size: 12px; }
 .send-button { width: 32px; height: 32px; border-radius: 9px; border: 0; background: var(--accent); color: white; font-size: 18px; }.send-button:disabled { opacity: .35; cursor: default; }.send-button.stop { font-size: 10px; }
 .composer-hint { margin: 8px 0 0; text-align: center; color: #a09c93; font-size: 10px; }
@@ -183,8 +187,8 @@ button { cursor: pointer; }
 }
 
 @media (max-width: 560px) {
-  .model-pill { display: none; }
   .topbar { overflow-x: auto; }
+  .model-effort-control > span { max-width: 82px; }
   .artifact-card { grid-template-columns: 1fr; }.artifact-card > img { width: 100%; height: 180px; }
   .outline-card ol { grid-template-columns: 1fr; }
   .run-confirmation { align-items: stretch; flex-direction: column; }

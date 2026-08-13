@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.config import ThinkingEffort
+
 AgentType = Literal["image", "slides", "research"]
 
 
@@ -37,6 +39,7 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
     mode: Literal["chat", "work"] = "chat"
     agent_type: AgentType | None = None
+    thinking_effort: ThinkingEffort = "medium"
 
     @model_validator(mode="after")
     def validate_mode(self):
@@ -85,6 +88,7 @@ class MessageRequest(BaseModel):
     file_ids: list[UUID] = Field(default_factory=list, max_length=3)
     skill_id: UUID | None = None
     skill_ids: list[UUID] = Field(default_factory=list, max_length=8)
+    thinking_effort: ThinkingEffort = "medium"
 
     @model_validator(mode="after")
     def validate_mode(self):
@@ -101,6 +105,10 @@ class MessageRequest(BaseModel):
     @property
     def effective_skill_ids(self) -> list[UUID]:
         return self.skill_ids or ([self.skill_id] if self.skill_id else [])
+
+
+class MessageRegenerateRequest(BaseModel):
+    thinking_effort: ThinkingEffort = "medium"
 
 
 class MessagePartOut(BaseModel):
@@ -211,6 +219,8 @@ class AppSettingsOut(BaseModel):
     memory_enabled: bool
     web_search_enabled: bool
     appearance: str
+    chat_model: str
+    agent_model: str
     model_ready: bool
     tavily_ready: bool
     storage_backend: str
@@ -234,6 +244,7 @@ class AgentRunRequest(BaseModel):
     intent: Literal["CREATE", "MODIFY", "RESUME"] | None = None
     source_run_id: UUID | None = None
     source_artifact_id: UUID | None = None
+    thinking_effort: ThinkingEffort = "medium"
 
     @model_validator(mode="after")
     def validate_skills(self):

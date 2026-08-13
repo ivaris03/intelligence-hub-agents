@@ -56,7 +56,6 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
         <span class="conversation-title">
           {{ chat.activeConversation?.title ?? (chat.pendingMode ? '等待第一句话…' : '新会话') }}
         </span>
-        <span class="model-pill">Qwen · 服务端</span>
       </header>
 
       <section ref="conversationView" class="conversation-view" aria-live="polite">
@@ -115,6 +114,8 @@ function sendWithAgent(agentType: 'image' | 'slides' | 'research', value: string
         v-model:selected-skill-ids="chat.selectedSkillIds"
         v-model:agent-type="chat.agentType"
         :mode="chat.mode"
+        v-model:thinking-effort="chat.thinkingEffort"
+        :model-name="chat.activeModelName"
         :streaming="chat.isStreaming"
         :files="chat.files"
         :selected-file-ids="chat.selectedFileIds"

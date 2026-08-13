@@ -41,6 +41,24 @@ def test_mode_combinations_are_server_validated() -> None:
     assert MessageRequest(content="画图", mode="work", agent_type="image").agent_type == "image"
 
 
+def test_thinking_effort_is_validated_and_forwarded_to_qwen() -> None:
+    with pytest.raises(ValidationError):
+        MessageRequest(content="分析", thinking_effort="extreme")
+
+    settings = Settings(
+        dashscope_api_key="test",
+        tavily_api_key=None,
+    )
+    assert QwenAdapter(settings.with_thinking_effort("low")).thinking_parameters() == {
+        "reasoning_effort": "low",
+    }
+    assert QwenAdapter(settings.with_thinking_effort("none")).thinking_parameters() == {
+        "reasoning_effort": "none",
+    }
+    high_adapter = QwenAdapter(settings.with_thinking_effort("high"))
+    assert high_adapter.chat_model().extra_body == {"reasoning_effort": "high"}
+
+
 def test_search_requires_explicit_language() -> None:
     assert should_search_web("请联网搜索今天的行业动态")
     assert should_search_web("search the web for current releases")

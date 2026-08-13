@@ -140,7 +140,10 @@ RAG_EXAMPLES = [
                 ("recent-messages", "RECENT_MESSAGE_LIMIT 默认取最近 12 条消息。"),
                 ("memory-summary", "每轮对话将整份用户记忆摘要注入 System Prompt。"),
                 ("slides-pages", "SLIDES_MAX_PAGES 默认最多 15 页。"),
-                ("thinking", "QWEN_THINKING_BUDGET 默认是 1024 tokens。"),
+                (
+                    "thinking",
+                    "QWEN_THINKING_EFFORT 默认是 medium，可选 none、low、medium、high。",
+                ),
                 ("chunks", "DOCUMENT_CHUNK_CHARS 默认是 1200，重叠 150 字符。"),
             ),
         },
@@ -311,10 +314,10 @@ _RAG_FACTS = [
         False,
     ),
     (
-        "thinking-budget",
-        "Chat 和 Work 的默认思考预算是多少 token？",
-        "QWEN_THINKING_BUDGET 默认配置为 1024 tokens。",
-        "默认 1024 tokens。",
+        "thinking-effort",
+        "Chat 和 Work 默认使用什么思考强度？有哪些选项？",
+        "QWEN_THINKING_EFFORT 默认配置为 medium，可选 none、low、medium、high。",
+        "默认 medium，可选 none、low、medium、high。",
         False,
     ),
     (

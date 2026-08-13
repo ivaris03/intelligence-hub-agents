@@ -40,6 +40,7 @@ from app.api.schemas import (
     MemorySummaryOut,
     MemorySummaryUpdate,
     MessageOut,
+    MessageRegenerateRequest,
     MessageRequest,
     SkillCreate,
     SkillOut,
@@ -125,7 +126,7 @@ async def chat_stream(payload: ChatRequest, settings: SettingsDep) -> StreamingR
         seq = 0
         try:
             async for kind, delta in QwenAdapter(settings).stream_text(
-                payload.content, payload.mode
+                payload.content, payload.mode, thinking_effort=payload.thinking_effort
             ):
                 seq += 1
                 event = "reasoning.delta" if kind == "reasoning" else "message.delta"
@@ -444,6 +445,7 @@ async def post_message(
             input=payload.content,
             file_ids=payload.file_ids,
             skill_ids=payload.effective_skill_ids,
+            thinking_effort=payload.thinking_effort,
         )
         try:
             run = await create_run(session, run_payload, settings)
@@ -489,10 +491,16 @@ async def regenerate_message(
     session: SessionDep,
     settings: SettingsDep,
     user: CurrentUserDep,
+    payload: MessageRegenerateRequest | None = None,
 ) -> StreamingResponse:
     await _owned_message(session, message_id, user.id)
     try:
-        prepared = await prepare_regeneration(session, message_id, settings)
+        prepared = await prepare_regeneration(
+            session,
+            message_id,
+            settings,
+            payload.thinking_effort if payload else "medium",
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except (ValueError, FileValidationError) as exc:
@@ -624,6 +632,8 @@ async def read_settings(
         memory_enabled=stored.memory_enabled,
         web_search_enabled=stored.web_search_enabled,
         appearance=stored.appearance,
+        chat_model=settings.qwen_chat_model,
+        agent_model=settings.qwen_agent_model,
         model_ready=settings.model_ready,
         tavily_ready=settings.tavily_ready,
         storage_backend=settings.storage_backend,
