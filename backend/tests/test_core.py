@@ -14,8 +14,14 @@ from app.agents.workflows import (
     Evidence,
     PresentationOutline,
     ResearchBudget,
+    ResearchEvaluation,
+    ResearchExecution,
+    ResearchPlan,
     ResearchResult,
     ResearchSection,
+    ResearchTopic,
+    build_research_graph,
+    deterministic_research_topic,
     normalize_presentation_outline,
     presentation_content_page_limit,
     route_presentation_intent,
@@ -158,6 +164,169 @@ def test_research_budget_and_citation_validation() -> None:
     assert validate_research_result(result) == []
     result.sections[0].evidence_ids = ["missing"]
     assert validate_research_result(result)
+
+
+def test_research_topic_is_created_even_for_an_explicit_request() -> None:
+    topic = deterministic_research_topic(
+        "研究 LangGraph 与 Deep Agents 的区别，要求比较状态管理、委派机制和适用场景"
+    )
+    assert topic.title
+    assert topic.objective
+    assert topic.scope
+    assert topic.key_questions
+    assert topic.deliverable.endswith("研究报告")
+
+
+def test_research_evaluation_keeps_gaps_when_search_budget_is_exhausted() -> None:
+    async def scenario() -> None:
+        settings = Settings(dashscope_api_key=None, tavily_api_key="test")
+        budget = ResearchBudget(max_searches=1, timeout_seconds=30)
+        budget.used_searches = 1
+        harness = DeepResearchHarness(settings, budget)
+        evaluation = await harness.evaluate(
+            ResearchTopic(
+                title="研究主题",
+                objective="形成结论",
+                scope=["重点"],
+                key_questions=["如何验证？"],
+            ),
+            ResearchPlan(
+                iteration=1,
+                focus=["重点"],
+                search_queries=["查询"],
+                completion_criteria=["覆盖重点"],
+            ),
+            ResearchExecution(summary="执行完成", remaining_gaps=["缺少一手来源"]),
+            iteration=1,
+        )
+        assert evaluation.sufficient is False
+        assert evaluation.gaps == ["缺少一手来源"]
+        assert "预算已用尽" in evaluation.rationale
+
+    asyncio.run(scenario())
+
+
+def test_research_plan_preserves_budget_for_a_follow_up_iteration() -> None:
+    async def scenario() -> None:
+        settings = Settings(dashscope_api_key=None, tavily_api_key="test")
+        harness = DeepResearchHarness(settings, ResearchBudget(max_searches=4, timeout_seconds=30))
+        plan = await harness.plan(
+            ResearchTopic(
+                title="研究主题",
+                objective="形成结论",
+                scope=["重点一", "重点二", "重点三", "重点四"],
+                key_questions=["如何验证？"],
+            ),
+            iteration=1,
+        )
+        assert len(plan.search_queries) == 2
+
+    asyncio.run(scenario())
+
+
+def test_deep_research_enforces_a_shared_per_round_search_limit() -> None:
+    async def scenario() -> None:
+        settings = Settings(dashscope_api_key=None, tavily_api_key="test")
+        budget = ResearchBudget(max_searches=4, timeout_seconds=30)
+        harness = DeepResearchHarness(settings, budget)
+
+        class FakeSearch:
+            async def search(self, query: str, *, max_results: int = 5):
+                del max_results
+                return [SearchResult(query, f"https://example.com/{query}", "可信摘要")]
+
+        harness.adapter = FakeSearch()
+        execution = await harness.execute(
+            ResearchTopic(
+                title="研究主题",
+                objective="形成结论",
+                scope=["重点一", "重点二", "重点三"],
+                key_questions=["如何验证？"],
+            ),
+            ResearchPlan(
+                iteration=1,
+                focus=["重点一", "重点二", "重点三"],
+                search_queries=["query-1", "query-2", "query-3"],
+                completion_criteria=["覆盖重点"],
+            ),
+        )
+        assert budget.used_searches == 2
+        assert execution.completed_queries == ["query-1", "query-2"]
+        assert len(harness.observed_urls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_research_graph_repeats_plan_execute_evaluate_before_summary(monkeypatch) -> None:
+    async def scenario() -> None:
+        settings = Settings(dashscope_api_key=None, tavily_api_key="test")
+        harness = DeepResearchHarness(settings, ResearchBudget(max_searches=3, timeout_seconds=30))
+        phases: list[str] = []
+
+        async def fake_plan(topic, *, iteration, context="", previous_evaluation=None):
+            del topic, context, previous_evaluation
+            phases.append(f"plan:{iteration}")
+            return ResearchPlan(
+                iteration=iteration,
+                focus=[f"重点 {iteration}"],
+                search_queries=[f"查询 {iteration}"],
+                completion_criteria=["覆盖重点"],
+            )
+
+        async def fake_execute(topic, plan, *, context=""):
+            del topic, context
+            phases.append(f"execute:{plan.iteration}")
+            harness.budget.used_searches += 1
+            return ResearchExecution(summary="执行完成", remaining_gaps=["继续"])
+
+        async def fake_evaluate(topic, plan, execution, *, iteration):
+            del topic, plan, execution
+            phases.append(f"evaluate:{iteration}")
+            return ResearchEvaluation(
+                sufficient=iteration >= 2,
+                gaps=[] if iteration >= 2 else ["继续"],
+                next_focus=[] if iteration >= 2 else ["继续"],
+                rationale="已充分" if iteration >= 2 else "还需一轮",
+            )
+
+        async def fake_summarize(topic, *, question, context=""):
+            del question, context
+            phases.append("summarize")
+            return ResearchResult(
+                title=topic.title,
+                sections=[ResearchSection(heading="结论", content="完成")],
+                evidence=[],
+            )
+
+        monkeypatch.setattr(harness, "plan", fake_plan)
+        monkeypatch.setattr(harness, "execute", fake_execute)
+        monkeypatch.setattr(harness, "evaluate", fake_evaluate)
+        monkeypatch.setattr(harness, "summarize", fake_summarize)
+        state = await build_research_graph(harness).ainvoke(
+            {
+                "question": "明确研究请求",
+                "context": "",
+                "topic": ResearchTopic(
+                    title="明确主题",
+                    objective="形成结论",
+                    scope=["重点"],
+                    key_questions=["如何验证？"],
+                ).model_dump(),
+            }
+        )
+        assert phases == [
+            "plan:1",
+            "execute:1",
+            "evaluate:1",
+            "plan:2",
+            "execute:2",
+            "evaluate:2",
+            "summarize",
+        ]
+        assert len(state["cycle_history"]) == 2
+        assert state["result"]["title"] == "明确主题"
+
+    asyncio.run(scenario())
 
 
 def test_provider_outputs_are_semantically_bounded() -> None:

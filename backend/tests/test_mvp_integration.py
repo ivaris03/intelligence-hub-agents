@@ -541,7 +541,22 @@ def test_all_agent_artifacts_and_slide_confirmation(mvp_client: TestClient) -> N
             "input": "研究个人 Agent Hub 的价值",
         },
     )
-    assert "event: artifact.created" in research.text
+    assert "event: research.topic.ready" in research.text
+    assert "awaiting_confirmation" in research.text
+    research_run = mvp_client.get(
+        f"/api/conversations/{conversation_id}/agent-runs"
+    ).json()[-1]
+    assert research_run["artifacts"] == []
+    assert research_run["public_state"]["research_topic"]["title"]
+    assert research_run["public_state"]["research_topic_confirmed"] is False
+    confirmed_research = mvp_client.post(
+        f"/api/agent-runs/{research_run['id']}/commands", json={"action": "confirm"}
+    )
+    assert "event: research.cycle" in confirmed_research.text
+    assert "event: artifact.created" in confirmed_research.text
+    final_research = mvp_client.get(f"/api/agent-runs/{research_run['id']}").json()
+    assert final_research["public_state"]["research_topic_confirmed"] is True
+    assert final_research["public_state"]["research_iterations"] >= 1
     runs = mvp_client.get(f"/api/conversations/{conversation_id}/agent-runs").json()
     assert {artifact["type"] for run in runs for artifact in run["artifacts"]} == {
         "image",

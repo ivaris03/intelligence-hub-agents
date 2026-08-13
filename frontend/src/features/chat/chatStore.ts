@@ -309,6 +309,24 @@ export const useChatStore = defineStore('chat', () => {
       if (event.outline) run.public_state.outline = event.outline
       if (event.modification_plan) run.public_state.modification_plan = event.modification_plan
     }
+    if (event.type === 'research.topic.ready') {
+      run.public_state.research_topic = event.topic
+      run.public_state.research_topic_confirmed = false
+    }
+    if (event.type === 'research.cycle') {
+      const iteration = Number(event.iteration)
+      const phase = String(event.phase)
+      const cycles = Array.isArray(run.public_state.research_cycle)
+        ? [...(run.public_state.research_cycle as Record<string, unknown>[])]
+        : []
+      const index = cycles.findIndex((item) => Number(item.iteration) === iteration)
+      const cycle: Record<string, unknown> = index >= 0 ? { ...cycles[index] } : { iteration }
+      const phaseKey = { plan: 'plan', execute: 'execution', evaluate: 'evaluation' }[phase]
+      if (phaseKey) cycle[phaseKey] = event.data
+      if (index >= 0) cycles[index] = cycle
+      else cycles.push(cycle)
+      run.public_state.research_cycle = cycles
+    }
     if (event.type === 'artifact.created') {
       const artifact = event.artifact as Artifact
       if (!run.artifacts.some((item) => item.id === artifact.id)) run.artifacts.push(artifact)

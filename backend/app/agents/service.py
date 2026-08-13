@@ -30,10 +30,12 @@ from app.agents.workflows import (
     PresentationOutline,
     ResearchBudget,
     ResearchResult,
+    ResearchTopic,
     SlideContent,
     build_presentation_graph,
     build_research_graph,
     deterministic_outline,
+    generate_research_topic,
     modification_plan,
     normalize_presentation_outline,
     presentation_content_page_limit,
@@ -311,7 +313,9 @@ async def _stream_run(
             async for event in _stream_slides(session, run, settings, stage, emit, action=action):
                 yield event
         else:
-            async for event in _stream_research(session, run, settings, stage, emit):
+            async for event in _stream_research(
+                session, run, settings, stage, emit, action=action
+            ):
                 yield event
     except asyncio.CancelledError:
         running_tools = (
@@ -1022,20 +1026,67 @@ def _modify_presentation(source: bytes, plan_data: dict[str, Any]) -> tuple[byte
     return output.getvalue(), titles
 
 
-async def _stream_research(session, run, settings, stage, emit):
-    yield await stage("planning", "拆解研究问题与预算")
+async def _stream_research(session, run, settings, stage, emit, *, action=None):
+    if action not in {None, "confirm", "retry"}:
+        raise ValueError("不支持的研究命令")
+    state = dict(run.public_state or {})
+    if action == "retry" and not state.get("research_topic_confirmed"):
+        run.status = "queued"
+        run.stage = "queued"
+        action = None
+    if action is None and run.status == "queued":
+        yield await stage("topic_drafting", "生成待确认的研究主题")
+        context = await _run_context(session, run, settings)
+        topic = await generate_research_topic(run.input, settings, context=context)
+        state["research_topic"] = topic.model_dump(mode="json")
+        state["research_topic_confirmed"] = False
+        state["research_cycle"] = []
+        run.public_state = state
+        run.stage = "awaiting_confirmation"
+        run.status = "awaiting_confirmation"
+        await session.commit()
+        yield await emit("research.topic.ready", {"topic": state["research_topic"]})
+        yield await emit(
+            "run.stage",
+            {
+                "stage": "awaiting_confirmation",
+                "label": "等待确认研究主题",
+                "status": "awaiting_confirmation",
+            },
+        )
+        yield await emit(
+            "completed", {"status": "awaiting_confirmation", "requires_action": True}
+        )
+        return
+    if action not in {"confirm", "retry"}:
+        raise ValueError("研究主题尚未确认")
+    if "research_topic" not in state:
+        raise ValueError("研究主题不存在，请重新开始研究任务")
+
+    if action == "confirm":
+        state["research_topic_confirmed"] = True
+        run.public_state = state
+        await session.commit()
+    elif not state.get("research_topic_confirmed"):
+        raise ValueError("研究主题尚未确认")
+
+    topic = ResearchTopic.model_validate(state["research_topic"])
+    yield await stage("planning", "Deep Agents 制定第 1 轮研究计划")
     budget = ResearchBudget(
         max_searches=settings.research_max_searches,
         timeout_seconds=settings.research_timeout_seconds,
     )
-    yield await stage("researching", "Deep Agents 搜索并整理证据")
     started = monotonic()
     call = ToolCall(
         run_id=run.id,
         seq=1,
         tool_name="deep-research",
         input_summary=redact(
-            {"question": run.input, "max_searches": settings.research_max_searches}
+            {
+                "topic": topic.title,
+                "max_searches": settings.research_max_searches,
+                "cycle": "plan-execute-evaluate",
+            }
         ),
         status="running",
     )
@@ -1053,10 +1104,83 @@ async def _stream_research(session, run, settings, stage, emit):
     context = await _run_context(session, run, settings)
     harness = DeepResearchHarness(settings, budget)
     graph = build_research_graph(harness)
-    # The harness reserves time for grounded synthesis; a tiny outer grace period
-    # lets LangGraph validation and Python cleanup finish inside the public budget.
     async with asyncio.timeout(settings.research_timeout_seconds + 3):
-        graph_state = await graph.ainvoke({"question": run.input, "context": context})
+        graph_state: dict[str, Any] = {
+            "question": run.input,
+            "context": context,
+            "topic": topic.model_dump(mode="json"),
+        }
+        async for update in graph.astream(graph_state, stream_mode="updates"):
+            node_name, node_update = next(iter(update.items()))
+            graph_state.update(node_update)
+            if node_name == "planning":
+                iteration = int(graph_state.get("iteration", 1))
+                label = f"Deep Agents 制定第 {iteration} 轮研究计划"
+                if iteration > 1:
+                    yield await stage("planning", label)
+                yield await emit(
+                    "research.cycle",
+                    {
+                        "phase": "plan",
+                        "iteration": iteration,
+                        "data": graph_state.get("plan", {}),
+                    },
+                )
+                persisted = dict(run.public_state or {})
+                cycles = list(persisted.get("research_cycle", []))
+                cycles.append(
+                    {
+                        "iteration": iteration,
+                        "plan": graph_state.get("plan", {}),
+                        "searches_used": budget.used_searches,
+                    }
+                )
+                persisted["research_cycle"] = cycles
+                persisted["research_iterations"] = iteration
+                run.public_state = persisted
+                await session.commit()
+            elif node_name == "executing":
+                iteration = int(graph_state.get("iteration", 1))
+                yield await stage("executing", f"Deep Agents 执行第 {iteration} 轮研究")
+                yield await emit(
+                    "research.cycle",
+                    {
+                        "phase": "execute",
+                        "iteration": iteration,
+                        "data": graph_state.get("execution", {}),
+                    },
+                )
+                persisted = dict(run.public_state or {})
+                cycles = list(persisted.get("research_cycle", []))
+                if cycles and int(cycles[-1].get("iteration", 0)) == iteration:
+                    cycles[-1] = {
+                        **cycles[-1],
+                        "execution": graph_state.get("execution", {}),
+                        "searches_used": budget.used_searches,
+                    }
+                persisted["research_cycle"] = cycles
+                run.public_state = persisted
+                await session.commit()
+            elif node_name == "evaluating":
+                iteration = int(graph_state.get("iteration", 1))
+                yield await stage("evaluating", f"Deep Agents 评估第 {iteration} 轮结果")
+                yield await emit(
+                    "research.cycle",
+                    {
+                        "phase": "evaluate",
+                        "iteration": iteration,
+                        "data": graph_state.get("evaluation", {}),
+                    },
+                )
+                persisted = dict(run.public_state or {})
+                persisted["research_cycle"] = graph_state.get("cycle_history", [])
+                persisted["research_iterations"] = iteration
+                run.public_state = persisted
+                await session.commit()
+            elif node_name == "summarizing":
+                yield await stage("summarizing", "汇总循环结果并生成研究报告")
+            elif node_name == "validating":
+                yield await stage("validating", "复验证据 URL 与引用关系")
     result = ResearchResult.model_validate(graph_state["result"])
     call.status = "completed"
     call.duration_ms = int((monotonic() - started) * 1000)
@@ -1074,7 +1198,6 @@ async def _stream_research(session, run, settings, stage, emit):
             "status": "completed",
         },
     )
-    yield await stage("validating", "复验证据 URL 与引用关系")
     errors = list(graph_state.get("validation_errors") or validate_research_result(result))
     if errors:
         raise ValueError("；".join(errors[:3]))
@@ -1099,6 +1222,8 @@ async def _stream_research(session, run, settings, stage, emit):
     state = dict(run.public_state or {})
     state["sources"] = [item.model_dump() for item in result.evidence]
     state["searches_used"] = budget.used_searches
+    state["research_cycle"] = graph_state.get("cycle_history", [])
+    state["research_iterations"] = int(graph_state.get("iteration", 0))
     run.public_state = state
     await session.commit()
     yield await emit("artifact.created", {"artifact": artifact_payload(artifact)})

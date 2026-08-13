@@ -956,10 +956,10 @@ async def command_agent_run(
         await cancel_run(session, run_id)
         loaded = await load_run(session, run_id)
         return _run_out(loaded)
-    if run.agent_type != "slides" and payload.action == "confirm":
-        raise HTTPException(400, "只有演示 Agent 需要确认")
+    if run.agent_type not in {"slides", "research"} and payload.action == "confirm":
+        raise HTTPException(400, "当前 Agent 不需要确认")
     if payload.action == "confirm" and run.status != "awaiting_confirmation":
-        raise HTTPException(409, "演示运行当前不在等待确认阶段")
+        raise HTTPException(409, "运行当前不在等待确认阶段")
     if payload.action == "retry" and run.status not in {"failed", "cancelled"}:
         raise HTTPException(409, "只有失败或已取消的运行可以重试")
     if payload.input:

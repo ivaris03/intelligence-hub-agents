@@ -19,8 +19,11 @@ const stageNames: Record<string, string> = {
   awaiting_confirmation: '等待确认',
   content: '生成页面内容',
   rendering: '渲染 PPTX',
-  planning: '研究规划',
-  researching: '搜索与证据整理',
+  topic_drafting: '生成研究主题',
+  planning: '制定研究计划',
+  executing: '执行研究计划',
+  evaluating: '评估研究结果',
+  summarizing: '汇总研究报告',
   validating: '校验结果',
   saving: '保存产物',
   completed: '已完成',
@@ -53,6 +56,30 @@ function outline(run: AgentRun) {
 
 function modification(run: AgentRun) {
   return run.public_state.modification_plan as { target_slides?: number[]; instruction?: string } | undefined
+}
+
+type ResearchTopic = {
+  title?: string
+  objective?: string
+  scope?: string[]
+  key_questions?: string[]
+  constraints?: string[]
+  deliverable?: string
+}
+
+type ResearchCycle = {
+  iteration?: number
+  plan?: { focus?: string[]; search_queries?: string[] }
+  execution?: { summary?: string; findings?: string[]; remaining_gaps?: string[] }
+  evaluation?: { sufficient?: boolean; gaps?: string[]; rationale?: string }
+}
+
+function researchTopic(run: AgentRun) {
+  return run.public_state.research_topic as ResearchTopic | undefined
+}
+
+function researchCycles(run: AgentRun) {
+  return (run.public_state.research_cycle as ResearchCycle[] | undefined) ?? []
 }
 
 function artifactTitles(metadata: Record<string, unknown>) {
@@ -111,9 +138,44 @@ function artifactTitles(metadata: Record<string, unknown>) {
         <h3>目标页面：{{ modification(run)?.target_slides?.join('、') }}</h3>
         <p>{{ modification(run)?.instruction }}</p>
       </section>
+      <section v-if="researchTopic(run)" class="research-topic-card">
+        <span class="section-kicker">研究主题</span>
+        <h3>{{ researchTopic(run)?.title }}</h3>
+        <p>{{ researchTopic(run)?.objective }}</p>
+        <dl>
+          <template v-if="researchTopic(run)?.scope?.length">
+            <dt>研究范围</dt>
+            <dd>{{ researchTopic(run)?.scope?.join('；') }}</dd>
+          </template>
+          <template v-if="researchTopic(run)?.key_questions?.length">
+            <dt>关键问题</dt>
+            <dd>{{ researchTopic(run)?.key_questions?.join('；') }}</dd>
+          </template>
+          <template v-if="researchTopic(run)?.constraints?.length">
+            <dt>约束</dt>
+            <dd>{{ researchTopic(run)?.constraints?.join('；') }}</dd>
+          </template>
+          <dt>交付物</dt>
+          <dd>{{ researchTopic(run)?.deliverable }}</dd>
+        </dl>
+      </section>
+
+      <section v-if="researchCycles(run).length" class="research-cycle-list">
+        <span class="section-kicker">计划 · 执行 · 评估</span>
+        <article v-for="cycle in researchCycles(run)" :key="cycle.iteration" class="research-cycle-item">
+          <header>
+            <b>第 {{ cycle.iteration }} 轮</b>
+            <span v-if="cycle.evaluation">{{ cycle.evaluation.sufficient ? '证据充分' : '发现证据缺口' }}</span>
+          </header>
+          <div v-if="cycle.plan"><small>计划</small><p>{{ cycle.plan.focus?.join('；') }}</p></div>
+          <div v-if="cycle.execution"><small>执行</small><p>{{ cycle.execution.summary }}</p></div>
+          <div v-if="cycle.evaluation"><small>评估</small><p>{{ cycle.evaluation.rationale }}</p></div>
+        </article>
+      </section>
 
       <div v-if="run.status === 'awaiting_confirmation'" class="run-confirmation">
-        <p>确认后才会生成新的 PPTX；原版本不会被覆盖。</p>
+        <p v-if="run.agent_type === 'research'">确认后才会启动 Deep Agents 的计划、执行、评估循环，并在循环结束后生成报告。</p>
+        <p v-else>确认后才会生成新的 PPTX；原版本不会被覆盖。</p>
         <button type="button" class="primary-action" @click="$emit('command', run, 'confirm')">确认并继续</button>
         <button type="button" @click="$emit('command', run, 'cancel')">取消</button>
       </div>
