@@ -11,9 +11,9 @@ from app.api.schemas import AdminUserCreate, AdminUserPatch, AuthTokenOut, Login
 from app.auth.security import (
     create_access_token,
     get_current_user,
+    hash_password,
     permissions_for,
     require_permission,
-    hash_password,
     verify_password,
 )
 from app.core.config import Settings, get_settings
@@ -62,26 +62,48 @@ async def logout(_: CurrentUserDep) -> None:
     # Access tokens are short-lived and stateless; the client discards its token.
     return None
 
+
 @router.get("/admin/users", response_model=list[UserOut])
-async def admin_users(session: SessionDep, _: Annotated[User, Depends(require_permission("users:read"))], q: str | None = None) -> list[UserOut]:
+async def admin_users(
+    session: SessionDep,
+    _: Annotated[User, Depends(require_permission("users:read"))],
+    q: str | None = None,
+) -> list[UserOut]:
     query = select(User).order_by(User.created_at.desc())
     if q:
         term = f"%{q.strip()}%"
         query = query.where(User.phone.ilike(term) | User.display_name.ilike(term))
     return [_user_out(user) for user in (await session.scalars(query)).all()]
 
+
 @router.post("/admin/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def admin_create_user(payload: AdminUserCreate, session: SessionDep, _: Annotated[User, Depends(require_permission("users:manage"))]) -> UserOut:
+async def admin_create_user(
+    payload: AdminUserCreate,
+    session: SessionDep,
+    _: Annotated[User, Depends(require_permission("users:manage"))],
+) -> UserOut:
     if await session.scalar(select(User).where(User.phone == payload.phone)):
         raise HTTPException(status.HTTP_409_CONFLICT, "手机号已存在")
-    user = User(phone=payload.phone, password_hash=hash_password(payload.password), display_name=payload.display_name, role=payload.role, is_active=True)
+    user = User(
+        phone=payload.phone,
+        password_hash=hash_password(payload.password),
+        display_name=payload.display_name,
+        role=payload.role,
+        is_active=True,
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)
     return _user_out(user)
 
+
 @router.patch("/admin/users/{user_id}", response_model=UserOut)
-async def admin_patch_user(user_id: UUID, payload: AdminUserPatch, session: SessionDep, actor: Annotated[User, Depends(require_permission("users:manage"))]) -> UserOut:
+async def admin_patch_user(
+    user_id: UUID,
+    payload: AdminUserPatch,
+    session: SessionDep,
+    actor: Annotated[User, Depends(require_permission("users:manage"))],
+) -> UserOut:
     target = await session.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
@@ -89,10 +111,14 @@ async def admin_patch_user(user_id: UUID, payload: AdminUserPatch, session: Sess
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能停用当前账号")
     if target.id == actor.id and payload.role == "member":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能降级当前管理员账号")
-    if payload.display_name is not None: target.display_name = payload.display_name
-    if payload.role is not None: target.role = payload.role
-    if payload.is_active is not None: target.is_active = payload.is_active
-    if payload.password: target.password_hash = hash_password(payload.password)
+    if payload.display_name is not None:
+        target.display_name = payload.display_name
+    if payload.role is not None:
+        target.role = payload.role
+    if payload.is_active is not None:
+        target.is_active = payload.is_active
+    if payload.password:
+        target.password_hash = hash_password(payload.password)
     await session.commit()
     await session.refresh(target)
     return _user_out(target)
