@@ -390,6 +390,12 @@ export const authApi = {
   logout: () => api<void>('/api/auth/logout', { method: 'POST' }),
 }
 
+export const adminUsersApi = {
+  list: (query = '') => api<CurrentUser[]>(`/api/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`),
+  create: (payload: { phone: string; password: string; display_name: string; role: 'admin' | 'member' }) => api<CurrentUser>('/api/admin/users', jsonInit('POST', payload)),
+  update: (id: string, payload: Partial<{ role: 'admin' | 'member'; is_active: boolean }>) => api<CurrentUser>(`/api/admin/users/${id}`, jsonInit('PATCH', payload)),
+}
+
 export async function downloadArtifact(url: string, name: string): Promise<void> {
   const response = await fetch(url, withAuth())
   if (!response.ok) throw new Error(`下载失败（${response.status}）`)

@@ -47,7 +47,7 @@ from app.api.schemas import (
     SkillPatch,
 )
 from app.artifacts.service import artifact_payload
-from app.auth.security import get_current_user
+from app.auth.security import get_current_user, require_permission
 from app.chat.service import (
     cancel_message,
     prepare_message,
@@ -80,7 +80,7 @@ from app.memory.service import (
 from app.skills.service import normalize_skill_name
 
 public_router = APIRouter()
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(dependencies=[Depends(require_permission("workspace:use"))])
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CurrentUserDep = Annotated[User, Depends(get_current_user)]

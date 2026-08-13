@@ -25,6 +25,18 @@ class UserOut(BaseModel):
     is_active: bool
     created_at: datetime
 
+class AdminUserCreate(BaseModel):
+    phone: str = Field(pattern=r"^1[3-9]\d{9}$")
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str = Field(min_length=1, max_length=80)
+    role: Literal["admin", "member"] = "member"
+
+class AdminUserPatch(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    role: Literal["admin", "member"] | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+
 
 class AuthTokenOut(BaseModel):
     access_token: str

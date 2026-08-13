@@ -13,7 +13,7 @@ Intelligence Hub 是一个面向个人工作区的 ChatGPT 风格 Agent Hub。�
 - 演示 Agent：LangGraph 大纲中断确认、LangChain 结构化页面、PPTX 生成、定向修改、版本链和 PostgreSQL 检查点恢复。
 - 研究 Agent：外层 LangGraph、共享搜索/总时长预算、Deep Agents 证据子 Agent、URL/引用复验和 Markdown 产物。
 - 统一的 `agent_runs`、阶段事件、脱敏工具记录与 Artifact 下载接口；本地文件和 MinIO 两种存储适配。
-- 手机号/密码登录、管理员/普通用户 RBAC，以及会话、文件、任务、Skill、Memory 和设置的用户级数据隔离；暂不提供独立管理端。
+- 手机号/密码登录、管理员/普通用户 RBAC，以及会话、文件、任务、Skill、Memory 和设置的用户级数据隔离；管理员可通过独立管理端查看、创建、启停和调整用户角色。
 
 ## 技术结构
 
