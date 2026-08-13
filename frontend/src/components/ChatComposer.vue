@@ -151,7 +151,7 @@ function readableSize(bytes: number) {
             @change="$emit('update:agentType', ($event.target as HTMLSelectElement).value as AgentType)"
           >
             <option value="image">图片 Agent</option>
-            <option value="slides">演示 Agent</option>
+            <option value="slides">PPT Agent</option>
             <option value="research">研究 Agent</option>
           </select>
           <button type="button" class="skill-select" aria-haspopup="true" :aria-expanded="showSkills" @click="toggleSkills">

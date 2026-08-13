@@ -8,7 +8,7 @@ import { renderMarkdown } from '@/lib/markdown'
 const props = defineProps<{ run: AgentRun }>()
 defineEmits<{ command: [run: AgentRun, action: 'confirm' | 'cancel' | 'retry' | 'resume'] }>()
 
-const agentNames = { image: '图片 Agent', slides: '演示 Agent', research: '研究 Agent' }
+const agentNames = { image: '图片 Agent', slides: 'PPT Agent', research: '研究 Agent' }
 const stageNames: Record<string, string> = {
   queued: '等待开始',
   preparing: '读取参考资料',
